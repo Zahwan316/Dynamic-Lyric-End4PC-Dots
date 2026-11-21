@@ -9,7 +9,7 @@ import Quickshell.Services.Mpris
 Rectangle {
     id: root
 
-    // --- Konfigurasi Tema & Ukuran ---
+    // --- Konfigurasi Tema, Posisi & Ukuran ---
     property color bgColor: "#101010"
     property color surfaceColor: "#292d42"
     property color borderColor: Qt.rgba(0.51, 0.67, 1.0, 0.24)
@@ -18,6 +18,7 @@ Rectangle {
     property color lyricDimColor: Qt.rgba(0.78, 0.83, 0.96, 0.36)
     property color subTextColor: Qt.rgba(0.78, 0.83, 0.96, 0.65)
     property real maxCompactLyricWidth: 360
+    property int yOffset: 6
 
     readonly property real expandedWidth: 424
     readonly property real expandedHeight: 348
@@ -36,6 +37,7 @@ Rectangle {
     property bool isLoadingLyrics: false
     property bool sessionActive: false
     property bool isFallbackLine: true
+    property bool isInstrumentalLine: false
     property var lineCache: ({})
 
     // --- Antrean Terjemahan & Romanisasi (Prioritas Baris Aktif, Anti Rate-Limit) ---
@@ -44,10 +46,14 @@ Rectangle {
     property bool isTranslatingNow: false
     property string activeQueueTrackId: ""
 
-    // --- State Sinkronisasi Tempo & Clock Audio ---
+    // --- State Sinkronisasi Tempo & Clock Audio (Anti-Teleport Guard) ---
     property real anchorPlayerPos: 0.0
     property double anchorWallMs: 0.0
     property double posQueryStartMs: 0.0
+    property string posQueryTrackId: ""
+    property double trackChangeWallMs: 0.0
+    property real pendingJumpPos: -1.0
+    property double pendingJumpWallMs: 0.0
     property real lastReportedPos: -1.0
     property int movingPosTicks: 0
     readonly property bool hasReliablePlayerClock: movingPosTicks >= 1 && lastReportedPos >= 0.0
@@ -72,6 +78,10 @@ Rectangle {
     property bool systemMuted: false
     property rect cachedAnchorRect: Qt.rect(0, 0, 1, 1)
 
+    transform: Translate {
+        y: root.yOffset
+    }
+
     function updatePopupAnchor() {
         const win = root.QsWindow.window
         if (!win || !win.contentItem)
@@ -81,6 +91,10 @@ Rectangle {
         const centeredX = Math.max(8, Math.min(maxX, pos.x + (root.width - expandedPopup.implicitWidth) * 0.5))
         cachedAnchorRect = Qt.rect(centeredX, pos.y, expandedPopup.implicitWidth, root.height)
     }
+
+    onXChanged: if (isExpanded) updatePopupAnchor()
+    onWidthChanged: if (isExpanded) updatePopupAnchor()
+    onYOffsetChanged: if (isExpanded) updatePopupAnchor()
 
     Behavior on expandProgress {
         NumberAnimation {
@@ -185,7 +199,7 @@ Rectangle {
     readonly property int currentTierCount: activeSlotItem ? activeSlotItem.tierCount : 1
 
     readonly property real compactTargetWidth: isIslandVisible
-        ? Math.max(150, (currentTierCount >= 3 ? 30 : 26) + currentTextWidth + 36 + 34)
+        ? Math.max(126, (currentTierCount >= 3 ? 30 : 26) + currentTextWidth + 36 + 34)
         : 36
     readonly property real compactTargetHeight: {
         if (!isIslandVisible)
@@ -197,7 +211,7 @@ Rectangle {
         return 34
     }
 
-    // --- Ukuran Kapsul di Top Bar (Tetap Kompak agar Tidak Terpotong Bar) ---
+    // --- Ukuran Kapsul di Top Bar ---
     visible: opacity > 0.01
     opacity: isIslandVisible ? 1.0 : 0.0
     transformOrigin: Item.Top
@@ -243,23 +257,34 @@ Rectangle {
         }
     }
 
-    // --- Sinkronisasi Jam Audio Real-Time (Latency-Compensated playerctl + MPRIS) ---
+    // --- Sinkronisasi Jam Audio Real-Time (Monotonic Clock + Anti-Teleport Guard) ---
     function queryPlayerctlPosition() {
         if (!playerctlPosProc.running) {
             posQueryStartMs = Date.now()
+            posQueryTrackId = root.currentTrackId
             playerctlPosProc.running = true
         }
     }
 
-    function applyReportedPosition(pos, forceSnap, sampleWallMs) {
+    function applyReportedPosition(pos, forceSnap, sampleWallMs, fromMprisSignal) {
         if (pos === undefined || pos === null || isNaN(pos) || pos < 0)
             return
 
-        const refMs = sampleWallMs > 0 ? sampleWallMs : Date.now()
+        const nowMs = Date.now()
+        const refMs = sampleWallMs > 0 ? sampleWallMs : nowMs
+
+        // Tolak nilai posisi yang melampaui durasi lagu (indikasi cache lagu sebelumnya)
+        const trackLen = (activePlayer && activePlayer.length > 1.0) ? activePlayer.length : 0
+        if (trackLen > 0 && pos > trackLen + 2.0)
+            return
+
+        // Sesaat setelah ganti lagu (< 1.2 detik), tolak posisi MPRIS yang tersisa dari lagu lama
+        if (!forceSnap && (nowMs - trackChangeWallMs) < 1200 && pos > 4.0)
+            return
 
         if (lastReportedPos >= 0 && Math.abs(pos - lastReportedPos) > 0.015) {
             movingPosTicks = Math.min(10, movingPosTicks + 1)
-        } else if (pos <= 0.01 && lastReportedPos > 0.5) {
+        } else if (pos <= 0.01 && lastReportedPos > 0.5 && (nowMs - trackChangeWallMs) < 2000) {
             movingPosTicks = 0
         }
         lastReportedPos = pos
@@ -267,18 +292,70 @@ Rectangle {
         const currentLive = getRawLivePositionSec()
         const delta = pos - currentLive
 
-        if (forceSnap || movingPosTicks <= 1 || Math.abs(delta) > 0.35) {
+        // Snap langsung jika dipaksa (misal klik seek di widget) atau inisialisasi awal
+        if (forceSnap || movingPosTicks <= 1) {
+            pendingJumpPos = -1.0
+            const isBackward = delta < -0.5
             anchorPlayerPos = pos
             anchorWallMs = refMs
-        } else if (Math.abs(delta) > 0.03) {
-            anchorPlayerPos = currentLive + (delta * 0.35)
-            anchorWallMs = refMs
+            if (isBackward) {
+                root.activeLyricIndex = -1
+                root.karaokeProgress = 0.0
+            }
+            updateKaraokeFrame(true)
+            return
         }
+
+        // Jika sinyal MPRIS pasif melaporkan lonjakan besar, verifikasi lewat playerctl dulu
+        if (fromMprisSignal && Math.abs(delta) > 0.75) {
+            queryPlayerctlPosition()
+            return
+        }
+
+        // Anti-Teleport: lonjakan besar (> 1.2s) harus terkonfirmasi 2 sampel berturut-turut
+        // Mencegah glitch IPC sesaat melempar lirik jauh lalu balik lagi
+        if (Math.abs(delta) > 1.2) {
+            const rate = (activePlayer && activePlayer.rate > 0) ? activePlayer.rate : 1.0
+            if (pendingJumpPos >= 0 && (refMs - pendingJumpWallMs) < 1500) {
+                const expectedJump = pendingJumpPos + (((refMs - pendingJumpWallMs) / 1000.0) * rate)
+                if (Math.abs(pos - expectedJump) < 0.85) {
+                    // Lonjakan terkonfirmasi sebagai seek asli
+                    pendingJumpPos = -1.0
+                    const isBackwardSeek = delta < -0.65
+                    anchorPlayerPos = pos
+                    anchorWallMs = refMs
+                    if (isBackwardSeek) {
+                        root.activeLyricIndex = -1
+                        root.karaokeProgress = 0.0
+                    }
+                    updateKaraokeFrame(true)
+                    return
+                }
+            }
+            // Simpan sebagai kandidat seek & langsung verifikasi 120ms lagi
+            pendingJumpPos = pos
+            pendingJumpWallMs = refMs
+            confirmSeekTimer.restart()
+            return
+        }
+
+        // Posisi normal (tidak melompat), bersihkan kandidat lonjakan
+        pendingJumpPos = -1.0
+    }
+
+    Timer {
+        id: confirmSeekTimer
+        interval: 120
+        repeat: false
+        onTriggered: root.queryPlayerctlPosition()
     }
 
     function syncClockAnchor(forceSnap) {
         if (forceSnap && activePlayer && activePlayer.position >= 0 && lastReportedPos < 0) {
-            applyReportedPosition(activePlayer.position, true, Date.now())
+            const nowMs = Date.now()
+            if ((nowMs - trackChangeWallMs) >= 1200 || activePlayer.position <= 4.0) {
+                applyReportedPosition(activePlayer.position, true, nowMs, true)
+            }
         }
         queryPlayerctlPosition()
     }
@@ -304,14 +381,17 @@ Rectangle {
             : ["playerctl", "position"]
         stdout: SplitParser {
             onRead: data => {
+                // Abaikan hasil jika lagu sudah berganti selama query berjalan
+                if (root.posQueryTrackId !== "" && root.posQueryTrackId !== root.currentTrackId)
+                    return
+
                 const val = parseFloat(data.trim())
                 if (!isNaN(val) && val >= 0) {
                     const nowMs = Date.now()
                     const midWallMs = root.posQueryStartMs > 0
                         ? (root.posQueryStartMs + nowMs) * 0.5
                         : nowMs
-                    root.applyReportedPosition(val, false, midWallMs)
-                    root.updateKaraokeFrame()
+                    root.applyReportedPosition(val, false, midWallMs, false)
                 }
             }
         }
@@ -319,10 +399,24 @@ Rectangle {
 
     Timer {
         id: posPollTimer
-        interval: root.movingPosTicks < 2 ? 150 : 250
+        interval: root.movingPosTicks < 2 ? 200 : 1000
         repeat: true
         running: root.isPlaying && root.isIslandVisible
         onTriggered: root.queryPlayerctlPosition()
+    }
+
+    // --- Deteksi Bagian Instrumental / Tanpa Vokal ---
+    function isInstrumentalText(str) {
+        const trimmed = (str || "").trim()
+        if (trimmed === "")
+            return true
+        // Hanya simbol nada musik, tanda baca, atau gelombang
+        if (/^[\s♪♫♩♬🎵🎶♭♮♯~～\-—–_•·.…*]+$/.test(trimmed))
+            return true
+        // Tag standar instrumental / jeda musik dalam LRC
+        if (/^[(\[【（]?\s*(instrumental|interlude|intro|outro|music|solo|guitar solo|piano solo|melody|break|musik)\s*[)\]】）]?$/i.test(trimmed))
+            return true
+        return false
     }
 
     // --- Perhitungan Kurva Karaoke Relatif (0.0s -> Durasi Baris) ---
@@ -382,6 +476,27 @@ Rectangle {
             return
 
         const item = lyricModel.get(idx)
+        const now = Date.now()
+        const calPos = getCalibratedPositionSec()
+        const baseStart = item.timeSec >= 0 ? item.timeSec : 0.0
+
+        // Jika baris ini adalah bagian instrumental / tanpa vokal
+        if (item.isInstrumental) {
+            const instDur = (item.endSec > baseStart) ? (item.endSec - baseStart) : 8.0
+            root.activeLyricIndex = idx
+            root.activeLineStartSec = baseStart
+            root.activeLineDurationSec = Math.max(1.0, instDur)
+            root.activeWordTimings = []
+            root.lineStartWallMs = now
+            root.pauseStartedWallMs = root.isPlaying ? 0.0 : now
+            root.currentRawLyric = ""
+            root.isLoadingLyrics = false
+            root.sessionActive = true
+            root.karaokeProgress = 1.0
+            transitionToText("", "", "", false, true)
+            return
+        }
+
         const cached = root.lineCache[item.rawText]
         const rawText = item.rawText
         const instantRom = instantLocalRomanize(rawText)
@@ -393,7 +508,6 @@ Rectangle {
             : item.translatedText
         const measureLen = Math.max(rawText.length, romText.length)
 
-        const baseStart = item.timeSec >= 0 ? item.timeSec : 0.0
         const durSec = (item.endSec > baseStart && (item.endSec - baseStart) <= 8.5)
             ? Math.max(0.4, (item.endSec - baseStart) * 0.94)
             : (item.timeSec >= 0
@@ -412,8 +526,6 @@ Rectangle {
             parsedWords = buildRelativeWordTimings(rawText, durSec)
         }
 
-        const now = Date.now()
-        const calPos = getCalibratedPositionSec()
         let initialElapsedSec = 0.0
         if (syncFromPlayerClock && root.hasReliablePlayerClock && item.timeSec >= 0 && Math.abs(calPos - item.timeSec) < 4.0) {
             initialElapsedSec = Math.max(0.0, calPos - item.timeSec)
@@ -428,9 +540,10 @@ Rectangle {
         root.currentRawLyric = rawText
         root.isLoadingLyrics = false
         root.sessionActive = true
+        root.karaokeProgress = 0.0
 
-        transitionToText(rawText, romText, transText, false)
-        updateKaraokeFrame()
+        transitionToText(rawText, romText, transText, false, false)
+        updateKaraokeFrame(true)
 
         if (!cached || cached.translatedText === "") {
             enqueueTranslationLines([rawText], true)
@@ -440,16 +553,7 @@ Rectangle {
     function getCurrentLineElapsedSec() {
         const now = root.isPlaying ? Date.now() : (root.pauseStartedWallMs > 0 ? root.pauseStartedWallMs : Date.now())
         const rate = (activePlayer && activePlayer.rate > 0) ? activePlayer.rate : 1.0
-        const wallElapsed = Math.max(0.0, ((now - root.lineStartWallMs) / 1000.0) * rate)
-
-        if (root.hasReliablePlayerClock && root.hasSyncedLrc && root.activeLineStartSec >= 0) {
-            const calPos = getCalibratedPositionSec()
-            const playerElapsed = calPos - root.activeLineStartSec
-            if (playerElapsed >= -0.25 && playerElapsed <= root.activeLineDurationSec + 1.0) {
-                return Math.max(0.0, playerElapsed)
-            }
-        }
-        return wallElapsed
+        return Math.max(0.0, ((now - root.lineStartWallMs) / 1000.0) * rate)
     }
 
     function evaluateKaraokeProgress(elapsedSec) {
@@ -478,7 +582,7 @@ Rectangle {
         return Math.max(0.0, Math.min(1.0, elapsedSec / span))
     }
 
-    function updateKaraokeFrame() {
+    function updateKaraokeFrame(allowBackward) {
         if (root.hasReliablePlayerClock && root.hasSyncedLrc && lyricModel.count > 0) {
             const calPos = getCalibratedPositionSec()
             if (calPos >= 0.0) {
@@ -497,13 +601,30 @@ Rectangle {
             }
         }
 
-        if (root.isFallbackLine) {
+        // Pada mode fallback (tanpa LRC), jika vokal sudah selesai > 3.2 detik tanpa baris baru,
+        // tampilkan ikon instrumental agar tidak membeku di lirik sebelumnya
+        if (!root.hasSyncedLrc && !root.isFallbackLine && !root.isInstrumentalLine && root.isPlaying) {
+            const elapsedSinceLine = getCurrentLineElapsedSec()
+            if (elapsedSinceLine > root.activeLineDurationSec + 3.2) {
+                root.currentRawLyric = ""
+                transitionToText("", "", "", false, true)
+                return
+            }
+        }
+
+        if (root.isFallbackLine || root.isInstrumentalLine) {
             root.karaokeProgress = 1.0
             return
         }
 
         const elapsed = getCurrentLineElapsedSec()
-        root.karaokeProgress = evaluateKaraokeProgress(elapsed)
+        const nextProgress = evaluateKaraokeProgress(elapsed)
+
+        // Jamin sapuan putih selalu bergerak maju halus tanpa pernah mundur
+        if (allowBackward)
+            root.karaokeProgress = nextProgress
+        else
+            root.karaokeProgress = Math.max(root.karaokeProgress, nextProgress)
     }
 
     Timer {
@@ -511,7 +632,7 @@ Rectangle {
         interval: 16
         repeat: true
         running: root.isPlaying && root.isIslandVisible && !root.isFallbackLine
-        onTriggered: root.updateKaraokeFrame()
+        onTriggered: root.updateKaraokeFrame(false)
     }
 
     onIsPlayingChanged: {
@@ -521,9 +642,11 @@ Rectangle {
                 lineStartWallMs += (now - pauseStartedWallMs)
                 pauseStartedWallMs = 0
             }
-            syncClockAnchor(true)
-            updateKaraokeFrame()
+            anchorWallMs = now
+            queryPlayerctlPosition()
+            updateKaraokeFrame(false)
         } else {
+            anchorPlayerPos = getRawLivePositionSec()
             pauseStartedWallMs = now
             queryPlayerctlPosition()
         }
@@ -533,13 +656,12 @@ Rectangle {
         target: root.activePlayer
         function onPositionChanged() {
             if (root.activePlayer && root.activePlayer.position >= 0) {
-                root.applyReportedPosition(root.activePlayer.position, true, Date.now())
+                root.applyReportedPosition(root.activePlayer.position, false, Date.now(), true)
             }
-            root.queryPlayerctlPosition()
-            root.updateKaraokeFrame()
         }
         function onRateChanged() {
-            root.queryPlayerctlPosition()
+            root.anchorPlayerPos = root.getRawLivePositionSec()
+            root.anchorWallMs = Date.now()
         }
     }
 
@@ -709,7 +831,7 @@ Rectangle {
         onExited: (code, status) => root.refreshVolume()
     }
 
-    // --- Model Seluruh Baris Lirik (3 Tier: rawText, romanizedText, translatedText) ---
+    // --- Model Seluruh Baris Lirik (3 Tier + Flag Instrumental) ---
     ListModel {
         id: lyricModel
     }
@@ -738,7 +860,7 @@ Rectangle {
 
         for (let i = 0; i < linesArray.length; i++) {
             const line = (linesArray[i] || "").trim()
-            if (line === "")
+            if (line === "" || isInstrumentalText(line))
                 continue
 
             const cached = root.lineCache[line]
@@ -769,13 +891,13 @@ Rectangle {
     }
 
     function ensureCurrentAndModelTranslated() {
-        if (root.currentRawLyric !== "" && !root.isFallbackLine) {
+        if (root.currentRawLyric !== "" && !root.isFallbackLine && !root.isInstrumentalLine) {
             enqueueTranslationLines([root.currentRawLyric], true)
         }
         const batch = []
         for (let i = 0; i < lyricModel.count; i++) {
             const item = lyricModel.get(i)
-            if (item.rawText !== "" && (item.translatedText === "" || (containsNonLatin(item.rawText) && item.romanizedText === ""))) {
+            if (!item.isInstrumental && item.rawText !== "" && (item.translatedText === "" || (containsNonLatin(item.rawText) && item.romanizedText === ""))) {
                 batch.push(item.rawText)
             }
         }
@@ -800,7 +922,8 @@ Rectangle {
         root.lineCache[origLine] = entry
 
         for (let idx = 0; idx < lyricModel.count; idx++) {
-            if (lyricModel.get(idx).rawText === origLine) {
+            const row = lyricModel.get(idx)
+            if (!row.isInstrumental && row.rawText === origLine) {
                 lyricModel.setProperty(idx, "romanizedText", finalRom)
                 lyricModel.setProperty(idx, "translatedText", transText)
             }
@@ -1019,6 +1142,102 @@ Rectangle {
         xhr.send()
     }
 
+    // Sisipkan penanda bagian instrumental pada intro, timestamp kosong, & jeda antarvokal panjang
+    function enrichEntriesWithInstrumentalBreaks(sortedEntries) {
+        if (!sortedEntries || sortedEntries.length === 0)
+            return []
+
+        const expanded = []
+
+        // 1. Jika intro lagu sebelum lirik pertama >= 3.5 detik, tampilkan ikon lagu di awal
+        if (sortedEntries[0].timeSec >= 3.5 && !sortedEntries[0].isInstrumental) {
+            expanded.push({
+                timeSec: 0.0,
+                endSec: sortedEntries[0].timeSec,
+                explicitEndSec: sortedEntries[0].timeSec,
+                rawText: "",
+                romanizedText: "",
+                translatedText: "",
+                wordTimingsJson: "",
+                isInstrumental: true
+            })
+        }
+
+        for (let k = 0; k < sortedEntries.length; k++) {
+            const cur = sortedEntries[k]
+            const nextStart = (k + 1 < sortedEntries.length) ? sortedEntries[k + 1].timeSec : -1
+
+            if (cur.isInstrumental) {
+                cur.endSec = nextStart
+                expanded.push(cur)
+                continue
+            }
+
+            const estVocalDur = Math.max(2.0, Math.min(6.0, cur.rawText.length * 0.14))
+            const vocalEnd = (cur.explicitEndSec > cur.timeSec)
+                ? cur.explicitEndSec
+                : (cur.timeSec + estVocalDur)
+
+            // Jika terdapat jeda tanpa vokal >= 3.8 detik sebelum baris berikutnya (intro/reff/instrumental)
+            if (nextStart > 0 && !sortedEntries[k + 1].isInstrumental && (nextStart - vocalEnd) >= 3.8) {
+                const breakStart = vocalEnd + 0.3
+                cur.endSec = breakStart
+                expanded.push(cur)
+                expanded.push({
+                    timeSec: breakStart,
+                    endSec: nextStart,
+                    explicitEndSec: nextStart,
+                    rawText: "",
+                    romanizedText: "",
+                    translatedText: "",
+                    wordTimingsJson: "",
+                    isInstrumental: true
+                })
+            } else {
+                cur.endSec = nextStart
+                expanded.push(cur)
+            }
+        }
+
+        // 2. Jika setelah lirik terakhir masih ada bagian instrumental penutup >= 5 detik
+        const trackLen = (activePlayer && activePlayer.length > 0) ? activePlayer.length : 0
+        if (expanded.length > 0 && trackLen > 0) {
+            const last = expanded[expanded.length - 1]
+            if (!last.isInstrumental) {
+                const lastVocalEnd = (last.explicitEndSec > last.timeSec)
+                    ? last.explicitEndSec
+                    : (last.timeSec + Math.max(2.0, Math.min(6.0, last.rawText.length * 0.14)))
+                if (trackLen - lastVocalEnd >= 5.0) {
+                    const outroStart = lastVocalEnd + 0.35
+                    last.endSec = outroStart
+                    expanded.push({
+                        timeSec: outroStart,
+                        endSec: trackLen,
+                        explicitEndSec: trackLen,
+                        rawText: "",
+                        romanizedText: "",
+                        translatedText: "",
+                        wordTimingsJson: "",
+                        isInstrumental: true
+                    })
+                }
+            }
+        }
+
+        // 3. Gabungkan blok instrumental berurutan agar tidak dobel
+        const finalized = []
+        for (let m = 0; m < expanded.length; m++) {
+            const item = expanded[m]
+            if (item.isInstrumental && finalized.length > 0 && finalized[finalized.length - 1].isInstrumental) {
+                finalized[finalized.length - 1].endSec = item.endSec
+                continue
+            }
+            finalized.push(item)
+        }
+
+        return finalized
+    }
+
     function parseNetEaseYrc(yrcText) {
         const lines = yrcText.split(/\r?\n/)
         const parsed = []
@@ -1056,7 +1275,18 @@ Rectangle {
             }
 
             const cleanText = fullLine.trim()
-            if (cleanText !== "" && rawWords.length > 0) {
+            if (isInstrumentalText(cleanText)) {
+                parsed.push({
+                    timeSec: lineStartSec,
+                    endSec: lineStartSec + Math.max(0.4, lineDurSec),
+                    explicitEndSec: lineStartSec + Math.max(0.4, lineDurSec),
+                    rawText: "",
+                    romanizedText: "",
+                    translatedText: "",
+                    wordTimingsJson: "",
+                    isInstrumental: true
+                })
+            } else if (cleanText !== "" && rawWords.length > 0) {
                 const totalLen = Math.max(1, fullLine.length)
                 const normalizedWords = rawWords.map(w => ({
                     relStart: w.relStart,
@@ -1064,17 +1294,21 @@ Rectangle {
                     ratioStart: w.charStart / totalLen,
                     ratioEnd: w.charEnd / totalLen
                 }))
+                const explicitEnd = lineStartSec + Math.max(0.4, lineDurSec)
                 parsed.push({
                     timeSec: lineStartSec,
-                    endSec: lineStartSec + Math.max(0.4, lineDurSec),
+                    endSec: explicitEnd,
+                    explicitEndSec: explicitEnd,
                     rawText: cleanText,
                     romanizedText: instantLocalRomanize(cleanText),
                     translatedText: "",
-                    wordTimingsJson: JSON.stringify(normalizedWords)
+                    wordTimingsJson: JSON.stringify(normalizedWords),
+                    isInstrumental: false
                 })
             }
         }
-        return parsed
+        parsed.sort((a, b) => a.timeSec - b.timeSec)
+        return enrichEntriesWithInstrumentalBreaks(parsed)
     }
 
     function fetchLrclibLyrics(title, artist, album, durationSec, trackSnapshot) {
@@ -1162,9 +1396,27 @@ Rectangle {
                 timestamps.push(parseTimestampToken(match[1], match[2], match[3]))
             }
 
-            const bodyWithoutLineTags = raw.replace(lineTimeRegex, "").trim()
-            if (timestamps.length === 0 || bodyWithoutLineTags === "")
+            if (timestamps.length === 0)
                 continue
+
+            const bodyWithoutLineTags = raw.replace(lineTimeRegex, "").trim()
+
+            // Baris timestamp kosong atau simbol nada -> tandai sebagai bagian instrumental
+            if (isInstrumentalText(bodyWithoutLineTags)) {
+                for (let t0 = 0; t0 < timestamps.length; t0++) {
+                    parsed.push({
+                        timeSec: timestamps[t0],
+                        endSec: -1,
+                        explicitEndSec: -1,
+                        rawText: "",
+                        romanizedText: "",
+                        translatedText: "",
+                        wordTimingsJson: "",
+                        isInstrumental: true
+                    })
+                }
+                continue
+            }
 
             let cleanText = bodyWithoutLineTags
             let wordTimingsJson = ""
@@ -1206,26 +1458,24 @@ Rectangle {
                 }
             }
 
-            const instantRom = instantLocalRomanize(cleanText)
+            const isInst = isInstrumentalText(cleanText)
+            const instantRom = isInst ? "" : instantLocalRomanize(cleanText)
             for (let t = 0; t < timestamps.length; t++) {
                 parsed.push({
                     timeSec: timestamps[t],
                     endSec: -1,
-                    rawText: cleanText,
+                    explicitEndSec: -1,
+                    rawText: isInst ? "" : cleanText,
                     romanizedText: instantRom,
                     translatedText: "",
-                    wordTimingsJson: wordTimingsJson
+                    wordTimingsJson: isInst ? "" : wordTimingsJson,
+                    isInstrumental: isInst
                 })
             }
         }
 
         parsed.sort((a, b) => a.timeSec - b.timeSec)
-        for (let k = 0; k < parsed.length; k++) {
-            if (parsed[k].endSec < 0) {
-                parsed[k].endSec = (k + 1 < parsed.length) ? parsed[k + 1].timeSec : -1
-            }
-        }
-        return parsed
+        return enrichEntriesWithInstrumentalBreaks(parsed)
     }
 
     function applyParsedLyricsToModel(entries, priority, trackSnapshot) {
@@ -1237,16 +1487,18 @@ Rectangle {
         const linesToQueue = []
         for (let j = 0; j < entries.length; j++) {
             const entry = entries[j]
-            const cached = root.lineCache[entry.rawText]
-            if (cached) {
-                if (cached.romanizedText !== "")
-                    entry.romanizedText = cached.romanizedText
-                entry.translatedText = cached.translatedText
+            if (!entry.isInstrumental) {
+                const cached = root.lineCache[entry.rawText]
+                if (cached) {
+                    if (cached.romanizedText !== "")
+                        entry.romanizedText = cached.romanizedText
+                    entry.translatedText = cached.translatedText
+                }
+                if (entry.translatedText === "") {
+                    linesToQueue.push(entry.rawText)
+                }
             }
             lyricModel.append(entry)
-            if (entry.translatedText === "") {
-                linesToQueue.push(entry.rawText)
-            }
         }
         root.hasSyncedLrc = true
         syncClockAnchor(true)
@@ -1267,6 +1519,8 @@ Rectangle {
 
         for (let i = 0; i < lyricModel.count; i++) {
             const item = lyricModel.get(i)
+            if (item.isInstrumental)
+                continue
             if (normalizeLyricMatchKey(item.rawText) === targetNorm) {
                 if (root.hasReliablePlayerClock && calLivePos >= 0.0 && item.timeSec >= 0) {
                     const diff = Math.abs(item.timeSec - calLivePos)
@@ -1318,7 +1572,7 @@ Rectangle {
             keepAliveTimer.stop()
             sessionActive = true
             syncClockAnchor(true)
-            if (displayedRawText === "")
+            if (displayedRawText === "" && !isInstrumentalLine)
                 showFallbackLine()
         } else {
             keepAliveTimer.restart()
@@ -1336,6 +1590,7 @@ Rectangle {
                 root.displayedRomanized = ""
                 root.displayedTranslation = ""
                 root.isLoadingLyrics = false
+                root.isInstrumentalLine = false
                 root.isExpanded = false
                 lyricModel.clear()
                 root.activeLyricIndex = -1
@@ -1343,6 +1598,8 @@ Rectangle {
                 root.lrcSourcePriority = 0
                 root.movingPosTicks = 0
                 root.lastReportedPos = -1.0
+                root.pendingJumpPos = -1.0
+                root.karaokeProgress = 0.0
                 root.translationQueue = []
                 root.queuedSet = ({})
                 root.isTranslatingNow = false
@@ -1353,9 +1610,11 @@ Rectangle {
     onCurrentTrackIdChanged: {
         if (currentTrackId !== "") {
             keepAliveTimer.stop()
+            confirmSeekTimer.stop()
             sessionActive = true
             currentRawLyric = ""
             isLoadingLyrics = true
+            isInstrumentalLine = false
             hasSyncedLrc = false
             lrcSourcePriority = 0
             activeLyricIndex = -1
@@ -1365,10 +1624,14 @@ Rectangle {
             queuedSet = ({})
             isTranslatingNow = false
             activeQueueTrackId = currentTrackId
+            trackChangeWallMs = Date.now()
+            posQueryTrackId = currentTrackId
+            pendingJumpPos = -1.0
             movingPosTicks = 0
             lastReportedPos = -1.0
             anchorPlayerPos = 0.0
             anchorWallMs = Date.now()
+            karaokeProgress = 0.0
             lastFallbackLineMs = 0
             lastFallbackCharCount = 0
             adaptiveMsPerChar = 72.0
@@ -1381,20 +1644,24 @@ Rectangle {
 
     function showFallbackLine() {
         const fallback = trackTitle !== "" ? ("♪ " + trackTitle) : "Memuat lirik..."
-        transitionToText(fallback, "", "", true)
+        transitionToText(fallback, "", "", true, false)
     }
 
-    function transitionToText(rawText, romText, transText, isFallback) {
+    function transitionToText(rawText, romText, transText, isFallback, isInstrumental) {
+        const instFlag = Boolean(isInstrumental)
         if (rawText === root.displayedRawText
             && romText === root.displayedRomanized
             && transText === root.displayedTranslation
-            && isFallback === root.isFallbackLine)
+            && isFallback === root.isFallbackLine
+            && instFlag === root.isInstrumentalLine)
             return
 
         root.displayedRawText = rawText
         root.displayedRomanized = romText
         root.displayedTranslation = transText
         root.isFallbackLine = isFallback
+        root.isInstrumentalLine = instFlag
+        root.karaokeProgress = (isFallback || instFlag) ? 1.0 : 0.0
 
         const slotA = slotALoader.item
         const slotB = slotBLoader.item
@@ -1410,12 +1677,11 @@ Rectangle {
         incoming.romanizedText = romText
         incoming.translatedText = transText
         incoming.isFallback = isFallback
+        incoming.isInstrumental = instFlag
         incoming.active = true
 
-        if (isFallback)
-            root.karaokeProgress = 1.0
-        else
-            updateKaraokeFrame()
+        if (!isFallback && !instFlag)
+            updateKaraokeFrame(true)
     }
 
     function updateLyricLine(newLine) {
@@ -1423,16 +1689,17 @@ Rectangle {
             return
         }
 
-        if (newLine === "") {
+        // Jika sptlrx mengirim baris kosong atau simbol musik di tengah lagu -> mode instrumental
+        if (isInstrumentalText(newLine)) {
             root.currentRawLyric = ""
             if (root.sessionActive || root.hasActivePlayer) {
-                root.isLoadingLyrics = true
-                root.showFallbackLine()
+                root.isLoadingLyrics = false
+                transitionToText("", "", "", false, true)
             }
             return
         }
 
-        if (newLine === root.currentRawLyric && !root.isLoadingLyrics)
+        if (newLine === root.currentRawLyric && !root.isLoadingLyrics && !root.isInstrumentalLine)
             return
 
         queryPlayerctlPosition()
@@ -1441,7 +1708,7 @@ Rectangle {
         if (root.hasSyncedLrc) {
             const matchedIdx = findBestMatchingIndex(newLine, calPos)
             if (matchedIdx !== -1) {
-                if (matchedIdx !== root.activeLyricIndex || root.isLoadingLyrics) {
+                if (matchedIdx !== root.activeLyricIndex || root.isLoadingLyrics || root.isInstrumentalLine) {
                     activateSyncedIndex(matchedIdx, false)
                 }
                 return
@@ -1476,17 +1743,19 @@ Rectangle {
         root.activeLineDurationSec = estDur
         root.activeWordTimings = buildRelativeWordTimings(newLine, estDur)
 
-        transitionToText(newLine, initialRom, initialTrans, false)
+        transitionToText(newLine, initialRom, initialTrans, false, false)
 
         if (!root.hasSyncedLrc) {
             if (lyricModel.count === 0 || lyricModel.get(lyricModel.count - 1).rawText !== newLine) {
                 lyricModel.append({
                     timeSec: -1,
                     endSec: -1,
+                    explicitEndSec: -1,
                     rawText: newLine,
                     romanizedText: initialRom,
                     translatedText: initialTrans,
-                    wordTimingsJson: ""
+                    wordTimingsJson: "",
+                    isInstrumental: false
                 })
             }
             root.activeLyricIndex = lyricModel.count - 1
@@ -1525,6 +1794,7 @@ Rectangle {
         if (hasActivePlayer) {
             sessionActive = true
             isLoadingLyrics = true
+            trackChangeWallMs = Date.now()
             syncClockAnchor(true)
             showFallbackLine()
             fetchExternalLyrics(trackTitle, trackArtist, trackAlbum, activePlayer ? activePlayer.length : 0)
@@ -1542,20 +1812,23 @@ Rectangle {
             property string translatedText: ""
             property bool active: false
             property bool isFallback: false
+            property bool isInstrumental: false
             property real progress: 0.0
 
-            readonly property bool showSecondLine: root.showRomajiSubline && romanizedText !== "" && !isFallback
-            readonly property bool showThirdLine: root.showTranslate && translatedText !== "" && !isFallback
-            readonly property int tierCount: 1 + (showSecondLine ? 1 : 0) + (showThirdLine ? 1 : 0)
+            readonly property bool showSecondLine: !isInstrumental && root.showRomajiSubline && romanizedText !== "" && !isFallback
+            readonly property bool showThirdLine: !isInstrumental && root.showTranslate && translatedText !== "" && !isFallback
+            readonly property int tierCount: isInstrumental ? 1 : (1 + (showSecondLine ? 1 : 0) + (showThirdLine ? 1 : 0))
 
-            readonly property real maxContentW: Math.max(
-                origDimText.implicitWidth,
-                showSecondLine ? romDimText.implicitWidth : 0,
-                showThirdLine ? subLineText.implicitWidth : 0
-            )
+            readonly property real maxContentW: isInstrumental
+                ? instrumentalRow.implicitWidth
+                : Math.max(
+                    origDimText.implicitWidth,
+                    showSecondLine ? romDimText.implicitWidth : 0,
+                    showThirdLine ? subLineText.implicitWidth : 0
+                )
 
             implicitWidth: Math.min(maxContentW, root.maxCompactLyricWidth)
-            implicitHeight: linesCol.implicitHeight
+            implicitHeight: isInstrumental ? instrumentalRow.implicitHeight : linesCol.implicitHeight
             clip: true
 
             opacity: active ? (isFallback && root.isLoadingLyrics ? pulseOpacity : 1.0) : 0.0
@@ -1600,8 +1873,51 @@ Rectangle {
             readonly property real origOverflow: Math.max(0, origDimText.implicitWidth - root.maxCompactLyricWidth)
             readonly property real romOverflow: Math.max(0, romDimText.implicitWidth - root.maxCompactLyricWidth)
 
+            // Tampilan Ikon Lagu saat Instrumental / Reff tanpa Vokal / Jeda Musik
+            Row {
+                id: instrumentalRow
+                visible: lineItem.isInstrumental
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 7
+
+                Text {
+                    text: "󰎇"
+                    color: root.accentColor
+                    font.pixelSize: 15
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Row {
+                    spacing: 4
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    Repeater {
+                        model: 3
+                        delegate: Rectangle {
+                            required property int index
+                            width: 4
+                            height: 4
+                            radius: 2
+                            color: root.lyricActiveColor
+                            opacity: 0.45
+
+                            SequentialAnimation on opacity {
+                                running: lineItem.active && lineItem.isInstrumental && root.isPlaying
+                                loops: Animation.Infinite
+                                PauseAnimation { duration: index * 180 }
+                                NumberAnimation { to: 1.0; duration: 420; easing.type: Easing.InOutSine }
+                                NumberAnimation { to: 0.35; duration: 420; easing.type: Easing.InOutSine }
+                                PauseAnimation { duration: Math.max(0, (2 - index) * 180) }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Tampilan Teks Lirik 3-Tier (Lirik Asli + Romaji + Terjemahan)
             Column {
                 id: linesCol
+                visible: !lineItem.isInstrumental
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 0
 
@@ -1615,7 +1931,7 @@ Rectangle {
                         id: origDimText
                         text: lineItem.rawText
                         color: root.lyricDimColor
-                        font.pixelSize: lineItem.tierCount >= 3 ? 11 : (lineItem.tierCount === 2 ? 12 : 13)
+                        font.pixelSize: lineItem.tierCount >= 3 ? 13 : (lineItem.tierCount === 2 ? 14 : 15)
                         font.weight: Font.DemiBold
                     }
 
@@ -1629,7 +1945,7 @@ Rectangle {
                         Text {
                             text: lineItem.rawText
                             color: root.lyricActiveColor
-                            font.pixelSize: lineItem.tierCount >= 3 ? 11 : (lineItem.tierCount === 2 ? 12 : 13)
+                            font.pixelSize: lineItem.tierCount >= 3 ? 13 : (lineItem.tierCount === 2 ? 14 : 15)
                             font.weight: Font.DemiBold
                         }
                     }
@@ -2211,9 +2527,9 @@ Rectangle {
                         Text {
                             anchors.centerIn: parent
                             visible: lyricModel.count === 0
-                            text: root.displayedRawText !== "" ? root.displayedRawText : "Menunggu lirik..."
-                            color: root.subTextColor
-                            font.pixelSize: 13
+                            text: root.isInstrumentalLine ? "󰎇   • • •   󰎇" : (root.displayedRawText !== "" ? root.displayedRawText : "Menunggu lirik...")
+                            color: root.isInstrumentalLine ? root.accentColor : root.subTextColor
+                            font.pixelSize: root.isInstrumentalLine ? 16 : 13
                         }
 
                         ListView {
@@ -2239,13 +2555,14 @@ Rectangle {
                                 required property string romanizedText
                                 required property string translatedText
                                 required property real timeSec
+                                required property bool isInstrumental
 
                                 readonly property bool isCurrent: index === root.activeLyricIndex
-                                readonly property bool showSecondRom: root.showRomajiSubline && romanizedText !== ""
-                                readonly property bool showThirdTrans: root.showTranslate && translatedText !== ""
+                                readonly property bool showSecondRom: !isInstrumental && root.showRomajiSubline && romanizedText !== ""
+                                readonly property bool showThirdTrans: !isInstrumental && root.showTranslate && translatedText !== ""
 
                                 width: fullLyricsView.width
-                                height: lyricRowColumn.implicitHeight + 4
+                                height: (isInstrumental ? instrumentalDelegateRow.implicitHeight : lyricRowColumn.implicitHeight) + 4
 
                                 layer.enabled: !isCurrent
                                 layer.effect: MultiEffect {
@@ -2265,8 +2582,39 @@ Rectangle {
                                     NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
                                 }
 
+                                // Baris Indikator Instrumental / Tanpa Vokal di Daftar Lirik
+                                Row {
+                                    id: instrumentalDelegateRow
+                                    visible: rowDelegate.isInstrumental
+                                    anchors.centerIn: parent
+                                    spacing: 10
+
+                                    Text {
+                                        text: "󰎇"
+                                        color: rowDelegate.isCurrent ? root.accentColor : root.subTextColor
+                                        font.pixelSize: 15
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+
+                                    Text {
+                                        text: "• • •"
+                                        color: rowDelegate.isCurrent ? root.lyricActiveColor : root.subTextColor
+                                        font.pixelSize: 13
+                                        font.weight: Font.Bold
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+
+                                    Text {
+                                        text: "󰎇"
+                                        color: rowDelegate.isCurrent ? root.accentColor : root.subTextColor
+                                        font.pixelSize: 15
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+                                }
+
                                 Column {
                                     id: lyricRowColumn
+                                    visible: !rowDelegate.isInstrumental
                                     width: parent.width
                                     anchors.verticalCenter: parent.verticalCenter
                                     spacing: 2
@@ -2378,7 +2726,7 @@ Rectangle {
                                         if (rowDelegate.timeSec >= 0 && root.activePlayer && root.activePlayer.canSeek) {
                                             const delta = rowDelegate.timeSec - root.activePlayer.position
                                             root.activePlayer.seek(delta)
-                                            root.applyReportedPosition(rowDelegate.timeSec, true, Date.now())
+                                            root.applyReportedPosition(rowDelegate.timeSec, true, Date.now(), false)
                                             root.activateSyncedIndex(rowDelegate.index, false)
                                         }
                                     }
