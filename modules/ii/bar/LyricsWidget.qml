@@ -20,8 +20,22 @@ Rectangle {
     property real maxCompactLyricWidth: 360
     property int yOffset: 6
 
-    readonly property real expandedWidth: 424
-    readonly property real expandedHeight: 348
+    readonly property real expandedWidth: 492
+    readonly property real expandedHeight: 404
+
+    // --- Palet Warna Dinamis dari Cover Album ---
+    property color albumAccentColor: "#d95353"
+    property color albumGlowColor: "#df8888"
+    property color albumButtonFill: "#b54949"
+    property color albumButtonBorder: "#c95858"
+    property color albumSliderColor: "#ea9a9a"
+    property string lastExtractedArtUrl: ""
+
+    Behavior on albumAccentColor { ColorAnimation { duration: 420 } }
+    Behavior on albumGlowColor { ColorAnimation { duration: 480 } }
+    Behavior on albumButtonFill { ColorAnimation { duration: 420 } }
+    Behavior on albumButtonBorder { ColorAnimation { duration: 420 } }
+    Behavior on albumSliderColor { ColorAnimation { duration: 420 } }
 
     // --- Mode Tampilan Lirik (2 Tombol Hover: Translate & Romaji) ---
     property bool showTranslate: true
@@ -67,6 +81,16 @@ Rectangle {
     property int lastFallbackCharCount: 0
     property real adaptiveMsPerChar: 72.0
 
+    // --- State Slider Musik & Durasi ---
+    property real fallbackTrackLengthSec: 0.0
+    readonly property real trackDurationSec: {
+        if (activePlayer && activePlayer.length > 0.5)
+            return activePlayer.length
+        return fallbackTrackLengthSec
+    }
+    property real sliderDisplayPosSec: 0.0
+    property bool isSeekingSlider: false
+
     // --- State Expanded (Hover Bouncy Floating Popup) ---
     property bool isExpanded: false
     property real expandProgress: isExpanded ? 1.0 : 0.0
@@ -76,10 +100,203 @@ Rectangle {
     property int lrcSourcePriority: 0
     property real systemVolume: 0.7
     property bool systemMuted: false
+    property bool volumeOsdActive: false
     property rect cachedAnchorRect: Qt.rect(0, 0, 1, 1)
 
     transform: Translate {
         y: root.yOffset
+    }
+
+    function formatDuration(sec) {
+        if (isNaN(sec) || sec <= 0)
+            return "0:00"
+        const total = Math.floor(sec)
+        const mins = Math.floor(total / 60)
+        const secs = total % 60
+        return mins + ":" + (secs < 10 ? "0" : "") + secs
+    }
+
+    function escapeHtml(str) {
+        return (str || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+    }
+
+    function buildRichKaraokeText(text, progress, activeCol, dimCol) {
+        if (!text || text.length === 0)
+            return ""
+        const clamped = Math.max(0.0, Math.min(1.0, progress))
+        const splitIdx = Math.round(text.length * clamped)
+        if (splitIdx <= 0)
+            return "<font color=\"" + dimCol + "\">" + escapeHtml(text) + "</font>"
+        if (splitIdx >= text.length)
+            return "<font color=\"" + activeCol + "\">" + escapeHtml(text) + "</font>"
+        const sung = escapeHtml(text.slice(0, splitIdx))
+        const unsung = escapeHtml(text.slice(splitIdx))
+        return "<font color=\"" + activeCol + "\">" + sung + "</font><font color=\"" + dimCol + "\">" + unsung + "</font>"
+    }
+
+    // --- Ekstraktor Warna Dominan/Aksen dari Cover Album ---
+    function resetAlbumPalette() {
+        albumAccentColor = "#82aaff"
+        albumGlowColor = "#6f92db"
+        albumButtonFill = "#4c6cb3"
+        albumButtonBorder = "#6989d1"
+        albumSliderColor = "#9dbaff"
+    }
+
+    function rgbToHsl(r, g, b) {
+        r /= 255.0
+        g /= 255.0
+        b /= 255.0
+        const max = Math.max(r, g, b)
+        const min = Math.min(r, g, b)
+        let h = 0.0
+        let s = 0.0
+        const l = (max + min) * 0.5
+
+        if (max !== min) {
+            const d = max - min
+            s = l > 0.5 ? d / (2.0 - max - min) : d / (max + min)
+            if (max === r)
+                h = ((g - b) / d) + (g < b ? 6.0 : 0.0)
+            else if (max === g)
+                h = ((b - r) / d) + 2.0
+            else
+                h = ((r - g) / d) + 4.0
+            h /= 6.0
+        }
+        return [h, s, l]
+    }
+
+    function hslToHex(h, s, l) {
+        function hue2rgb(p, q, t) {
+            if (t < 0.0) t += 1.0
+            if (t > 1.0) t -= 1.0
+            if (t < 1.0 / 6.0) return p + (q - p) * 6.0 * t
+            if (t < 0.5) return q
+            if (t < 2.0 / 3.0) return p + (q - p) * (2.0 / 3.0 - t) * 6.0
+            return p
+        }
+        let r, g, b
+        if (s === 0.0) {
+            r = g = b = l
+        } else {
+            const q = l < 0.5 ? l * (1.0 + s) : l + s - l * s
+            const p = 2.0 * l - q
+            r = hue2rgb(p, q, h + 1.0 / 3.0)
+            g = hue2rgb(p, q, h)
+            b = hue2rgb(p, q, h - 1.0 / 3.0)
+        }
+        const toHex = v => {
+            const n = Math.max(0, Math.min(255, Math.round(v * 255)))
+            return (n < 16 ? "0" : "") + n.toString(16)
+        }
+        return "#" + toHex(r) + toHex(g) + toHex(b)
+    }
+
+    function extractColorsFromArt(artUrl) {
+        if (!artUrl || artUrl === "") {
+            lastExtractedArtUrl = ""
+            resetAlbumPalette()
+            return
+        }
+        if (artUrl === lastExtractedArtUrl)
+            return
+
+        if (lastExtractedArtUrl !== "" && colorSamplerCanvas.isImageLoaded(lastExtractedArtUrl)) {
+            colorSamplerCanvas.unloadImage(lastExtractedArtUrl)
+        }
+        lastExtractedArtUrl = artUrl
+        colorSamplerCanvas.loadImage(artUrl)
+    }
+
+    onAlbumArtUrlChanged: extractColorsFromArt(albumArtUrl)
+
+    Canvas {
+        id: colorSamplerCanvas
+        width: 36
+        height: 36
+        visible: false
+
+        onImageLoaded: {
+            const url = root.lastExtractedArtUrl
+            if (!url || !isImageLoaded(url))
+                return
+
+            const ctx = getContext("2d")
+            ctx.clearRect(0, 0, width, height)
+            ctx.drawImage(url, 0, 0, width, height)
+
+            let imgData
+            try {
+                imgData = ctx.getImageData(0, 0, width, height).data
+            } catch (e) {
+                root.resetAlbumPalette()
+                return
+            }
+
+            const binCount = 24
+            const bins = []
+            for (let b = 0; b < binCount; b++) {
+                bins.push({ weight: 0.0, hSum: 0.0, sSum: 0.0, lSum: 0.0 })
+            }
+
+            let totalVibrantWeight = 0.0
+            for (let i = 0; i < imgData.length; i += 4) {
+                const alpha = imgData[i + 3]
+                if (alpha < 128)
+                    continue
+
+                const r = imgData[i]
+                const g = imgData[i + 1]
+                const bVal = imgData[i + 2]
+                const hsl = root.rgbToHsl(r, g, bVal)
+                const h = hsl[0]
+                const s = hsl[1]
+                const l = hsl[2]
+
+                // Abaikan piksel putih bersih, hitam pekat, atau abu-abu pucat
+                if (l > 0.90 || l < 0.09 || s < 0.16)
+                    continue
+
+                const lumFactor = 1.0 - Math.min(0.85, Math.abs(l - 0.50) * 1.4)
+                const w = Math.pow(s, 1.35) * lumFactor
+                const binIdx = Math.min(binCount - 1, Math.floor(h * binCount))
+
+                bins[binIdx].weight += w
+                bins[binIdx].hSum += h * w
+                bins[binIdx].sSum += s * w
+                bins[binIdx].lSum += l * w
+                totalVibrantWeight += w
+            }
+
+            if (totalVibrantWeight <= 0.05) {
+                // Cover monokrom/hitam-putih -> gunakan aksen netral elegan
+                root.albumAccentColor = "#9eb3d6"
+                root.albumGlowColor = "#7d8fa8"
+                root.albumButtonFill = "#55647a"
+                root.albumButtonBorder = "#7486a1"
+                root.albumSliderColor = "#b4c5e0"
+                return
+            }
+
+            let bestBin = bins[0]
+            for (let k = 1; k < binCount; k++) {
+                if (bins[k].weight > bestBin.weight)
+                    bestBin = bins[k]
+            }
+
+            const domH = bestBin.hSum / bestBin.weight
+            const domS = Math.max(0.42, Math.min(0.85, bestBin.sSum / bestBin.weight))
+
+            root.albumAccentColor = root.hslToHex(domH, Math.min(0.86, domS + 0.06), 0.54)
+            root.albumGlowColor = root.hslToHex(domH, Math.max(0.45, domS * 0.85), 0.72)
+            root.albumButtonFill = root.hslToHex(domH, Math.min(0.78, domS), 0.46)
+            root.albumButtonBorder = root.hslToHex(domH, Math.min(0.82, domS + 0.04), 0.56)
+            root.albumSliderColor = root.hslToHex(domH, Math.max(0.48, domS * 0.9), 0.75)
+        }
     }
 
     function updatePopupAnchor() {
@@ -199,7 +416,7 @@ Rectangle {
     readonly property int currentTierCount: activeSlotItem ? activeSlotItem.tierCount : 1
 
     readonly property real compactTargetWidth: isIslandVisible
-        ? Math.max(126, (currentTierCount >= 3 ? 30 : 26) + currentTextWidth + 36 + 34)
+        ? Math.max(96, (currentTierCount >= 3 ? 30 : 26) + currentTextWidth + 36 + 34)
         : 36
     readonly property real compactTargetHeight: {
         if (!isIslandVisible)
@@ -257,12 +474,51 @@ Rectangle {
         }
     }
 
-    // --- Sinkronisasi Jam Audio Real-Time (Monotonic Clock + Anti-Teleport Guard) ---
+    // --- Sinkronisasi Jam Audio Real-Time & Durasi Lagu ---
     function queryPlayerctlPosition() {
         if (!playerctlPosProc.running) {
             posQueryStartMs = Date.now()
             posQueryTrackId = root.currentTrackId
             playerctlPosProc.running = true
+        }
+        if (root.trackDurationSec <= 0.5 && !playerctlLenProc.running) {
+            playerctlLenProc.running = true
+        }
+    }
+
+    function seekToSeconds(targetSec) {
+        const maxDur = root.trackDurationSec
+        const clamped = maxDur > 0 ? Math.max(0.0, Math.min(maxDur, targetSec)) : Math.max(0.0, targetSec)
+        if (root.activePlayer && root.activePlayer.canSeek) {
+            const delta = clamped - root.activePlayer.position
+            root.activePlayer.seek(delta)
+        } else {
+            playerctlSeekProc.command = root.activePlayerName !== ""
+                ? ["playerctl", "-p", root.activePlayerName, "position", clamped.toFixed(2)]
+                : ["playerctl", "position", clamped.toFixed(2)]
+            playerctlSeekProc.running = true
+        }
+        root.applyReportedPosition(clamped, true, Date.now(), false)
+        root.sliderDisplayPosSec = clamped
+    }
+
+    Process {
+        id: playerctlSeekProc
+        command: ["playerctl", "position", "0"]
+    }
+
+    Process {
+        id: playerctlLenProc
+        command: root.activePlayerName !== ""
+            ? ["playerctl", "-p", root.activePlayerName, "metadata", "mpris:length"]
+            : ["playerctl", "metadata", "mpris:length"]
+        stdout: SplitParser {
+            onRead: data => {
+                const micro = parseFloat(data.trim())
+                if (!isNaN(micro) && micro > 1000000) {
+                    root.fallbackTrackLengthSec = micro / 1000000.0
+                }
+            }
         }
     }
 
@@ -273,12 +529,10 @@ Rectangle {
         const nowMs = Date.now()
         const refMs = sampleWallMs > 0 ? sampleWallMs : nowMs
 
-        // Tolak nilai posisi yang melampaui durasi lagu (indikasi cache lagu sebelumnya)
-        const trackLen = (activePlayer && activePlayer.length > 1.0) ? activePlayer.length : 0
-        if (trackLen > 0 && pos > trackLen + 2.0)
+        const trackLen = root.trackDurationSec
+        if (trackLen > 1.0 && pos > trackLen + 2.0)
             return
 
-        // Sesaat setelah ganti lagu (< 1.2 detik), tolak posisi MPRIS yang tersisa dari lagu lama
         if (!forceSnap && (nowMs - trackChangeWallMs) < 1200 && pos > 4.0)
             return
 
@@ -292,12 +546,13 @@ Rectangle {
         const currentLive = getRawLivePositionSec()
         const delta = pos - currentLive
 
-        // Snap langsung jika dipaksa (misal klik seek di widget) atau inisialisasi awal
         if (forceSnap || movingPosTicks <= 1) {
             pendingJumpPos = -1.0
             const isBackward = delta < -0.5
             anchorPlayerPos = pos
             anchorWallMs = refMs
+            if (!isSeekingSlider)
+                sliderDisplayPosSec = pos
             if (isBackward) {
                 root.activeLyricIndex = -1
                 root.karaokeProgress = 0.0
@@ -306,24 +561,23 @@ Rectangle {
             return
         }
 
-        // Jika sinyal MPRIS pasif melaporkan lonjakan besar, verifikasi lewat playerctl dulu
-        if (fromMprisSignal && Math.abs(delta) > 0.75) {
+        if (fromMprisSignal && Math.abs(delta) > 0.45) {
             queryPlayerctlPosition()
             return
         }
 
         // Anti-Teleport: lonjakan besar (> 1.2s) harus terkonfirmasi 2 sampel berturut-turut
-        // Mencegah glitch IPC sesaat melempar lirik jauh lalu balik lagi
         if (Math.abs(delta) > 1.2) {
             const rate = (activePlayer && activePlayer.rate > 0) ? activePlayer.rate : 1.0
             if (pendingJumpPos >= 0 && (refMs - pendingJumpWallMs) < 1500) {
                 const expectedJump = pendingJumpPos + (((refMs - pendingJumpWallMs) / 1000.0) * rate)
                 if (Math.abs(pos - expectedJump) < 0.85) {
-                    // Lonjakan terkonfirmasi sebagai seek asli
                     pendingJumpPos = -1.0
                     const isBackwardSeek = delta < -0.65
                     anchorPlayerPos = pos
                     anchorWallMs = refMs
+                    if (!isSeekingSlider)
+                        sliderDisplayPosSec = pos
                     if (isBackwardSeek) {
                         root.activeLyricIndex = -1
                         root.karaokeProgress = 0.0
@@ -332,15 +586,20 @@ Rectangle {
                     return
                 }
             }
-            // Simpan sebagai kandidat seek & langsung verifikasi 120ms lagi
             pendingJumpPos = pos
             pendingJumpWallMs = refMs
             confirmSeekTimer.restart()
             return
         }
 
-        // Posisi normal (tidak melompat), bersihkan kandidat lonjakan
         pendingJumpPos = -1.0
+
+        // Koreksi fase halus untuk drift kecil (0.08s .. 1.2s) agar lirik tidak tertinggal/mendahului
+        if (Math.abs(delta) >= 0.08) {
+            anchorPlayerPos = currentLive + (delta * 0.28)
+            anchorWallMs = refMs
+            updateKaraokeFrame(false)
+        }
     }
 
     Timer {
@@ -381,7 +640,6 @@ Rectangle {
             : ["playerctl", "position"]
         stdout: SplitParser {
             onRead: data => {
-                // Abaikan hasil jika lagu sudah berganti selama query berjalan
                 if (root.posQueryTrackId !== "" && root.posQueryTrackId !== root.currentTrackId)
                     return
 
@@ -399,7 +657,7 @@ Rectangle {
 
     Timer {
         id: posPollTimer
-        interval: root.movingPosTicks < 2 ? 200 : 1000
+        interval: root.movingPosTicks < 2 ? 200 : 800
         repeat: true
         running: root.isPlaying && root.isIslandVisible
         onTriggered: root.queryPlayerctlPosition()
@@ -410,13 +668,33 @@ Rectangle {
         const trimmed = (str || "").trim()
         if (trimmed === "")
             return true
-        // Hanya simbol nada musik, tanda baca, atau gelombang
         if (/^[\s♪♫♩♬🎵🎶♭♮♯~～\-—–_•·.…*]+$/.test(trimmed))
             return true
-        // Tag standar instrumental / jeda musik dalam LRC
         if (/^[(\[【（]?\s*(instrumental|interlude|intro|outro|music|solo|guitar solo|piano solo|melody|break|musik)\s*[)\]】）]?$/i.test(trimmed))
             return true
         return false
+    }
+
+    // --- Estimasi Durasi Vokal Berdasarkan Panjang-Pendek & Jenis Aksara Baris Lirik ---
+    function estimateNaturalVocalDurationSec(text) {
+        if (!text || text.length === 0)
+            return 1.2
+        let syllableUnits = 0.0
+        for (let i = 0; i < text.length; i++) {
+            const code = text.charCodeAt(i)
+            // Aksara CJK / Hiragana / Katakana / Hangeul = 1 suku kata penuh per karakter
+            if ((code >= 0x3040 && code <= 0x30FF)
+                || (code >= 0x4E00 && code <= 0x9FFF)
+                || (code >= 0xAC00 && code <= 0xD7AF)) {
+                syllableUnits += 1.0
+            } else if (text[i] === " ") {
+                syllableUnits += 0.15
+            } else {
+                syllableUnits += 0.45
+            }
+        }
+        // Baris pendek (mis. 2-4 suku kata) -> ~0.8s..1.4s; baris panjang -> proporsional hingga 8.5s
+        return Math.max(0.75, Math.min(8.5, syllableUnits * 0.25))
     }
 
     // --- Perhitungan Kurva Karaoke Relatif (0.0s -> Durasi Baris) ---
@@ -432,11 +710,11 @@ Rectangle {
             const ch = text[i]
             let w = 1.0
             if (ch === " ")
-                w = 0.42
+                w = 0.35
             else if (",;、，".indexOf(ch) !== -1)
-                w = 1.55
+                w = 1.5
             else if (".!?。！？—–".indexOf(ch) !== -1)
-                w = 1.75
+                w = 1.65
             weights.push(w)
             totalWeight += w
         }
@@ -456,19 +734,20 @@ Rectangle {
         return result
     }
 
-    function computeLineDurationSec(idx, startSec, textLength) {
-        const estimatedVocalSec = Math.max(2.2, textLength * 0.145)
+    function computeLineDurationSec(idx, startSec, rawText) {
+        const estimatedVocalSec = estimateNaturalVocalDurationSec(rawText)
         if (idx + 1 < lyricModel.count) {
             const nextStart = lyricModel.get(idx + 1).timeSec
             const gap = nextStart - startSec
             if (gap > 0.25) {
-                if (gap > 8.5)
-                    return Math.min(gap - 0.35, Math.max(3.2, estimatedVocalSec))
-                return Math.max(0.4, gap * 0.94)
+                // Jika jarak ke baris berikutnya panjang, izinkan vokal bernyanyi penuh sebelum berhenti
+                if (gap > estimatedVocalSec + 2.5)
+                    return Math.min(gap - 0.35, Math.max(estimatedVocalSec, Math.min(7.5, gap * 0.65)))
+                return Math.max(0.45, gap * 0.94)
             }
         }
-        const trackLen = (activePlayer && activePlayer.length > startSec) ? activePlayer.length : (startSec + 10.0)
-        return Math.min(trackLen - startSec, estimatedVocalSec)
+        const trackLen = (root.trackDurationSec > startSec) ? root.trackDurationSec : (startSec + 10.0)
+        return Math.max(0.5, Math.min(trackLen - startSec, estimatedVocalSec))
     }
 
     function activateSyncedIndex(idx, syncFromPlayerClock) {
@@ -480,7 +759,6 @@ Rectangle {
         const calPos = getCalibratedPositionSec()
         const baseStart = item.timeSec >= 0 ? item.timeSec : 0.0
 
-        // Jika baris ini adalah bagian instrumental / tanpa vokal
         if (item.isInstrumental) {
             const instDur = (item.endSec > baseStart) ? (item.endSec - baseStart) : 8.0
             root.activeLyricIndex = idx
@@ -506,13 +784,12 @@ Rectangle {
         const transText = (cached && cached.translatedText !== "")
             ? cached.translatedText
             : item.translatedText
-        const measureLen = Math.max(rawText.length, romText.length)
 
-        const durSec = (item.endSec > baseStart && (item.endSec - baseStart) <= 8.5)
-            ? Math.max(0.4, (item.endSec - baseStart) * 0.94)
+        const durSec = (item.explicitEndSec > baseStart && (item.explicitEndSec - baseStart) <= 10.0)
+            ? Math.max(0.45, (item.explicitEndSec - baseStart) * 0.95)
             : (item.timeSec >= 0
-                ? computeLineDurationSec(idx, item.timeSec, measureLen)
-                : Math.max(1.4, (measureLen * root.adaptiveMsPerChar) / 1000.0))
+                ? computeLineDurationSec(idx, item.timeSec, rawText)
+                : estimateNaturalVocalDurationSec(rawText))
 
         let parsedWords = []
         if (item.wordTimingsJson && item.wordTimingsJson !== "") {
@@ -527,7 +804,7 @@ Rectangle {
         }
 
         let initialElapsedSec = 0.0
-        if (syncFromPlayerClock && root.hasReliablePlayerClock && item.timeSec >= 0 && Math.abs(calPos - item.timeSec) < 4.0) {
+        if (syncFromPlayerClock && root.hasReliablePlayerClock && item.timeSec >= 0 && Math.abs(calPos - item.timeSec) < 8.0) {
             initialElapsedSec = Math.max(0.0, calPos - item.timeSec)
         }
 
@@ -583,8 +860,14 @@ Rectangle {
     }
 
     function updateKaraokeFrame(allowBackward) {
+        const calPos = getCalibratedPositionSec()
+        if (!root.isSeekingSlider) {
+            root.sliderDisplayPosSec = root.trackDurationSec > 0
+                ? Math.min(root.trackDurationSec, calPos)
+                : calPos
+        }
+
         if (root.hasReliablePlayerClock && root.hasSyncedLrc && lyricModel.count > 0) {
-            const calPos = getCalibratedPositionSec()
             if (calPos >= 0.0) {
                 let targetIdx = -1
                 const lookupPos = calPos + 0.04
@@ -601,11 +884,10 @@ Rectangle {
             }
         }
 
-        // Pada mode fallback (tanpa LRC), jika vokal sudah selesai > 3.2 detik tanpa baris baru,
-        // tampilkan ikon instrumental agar tidak membeku di lirik sebelumnya
+        // Pada mode fallback (tanpa LRC), baru beralih ke ikon musik jika jeda tanpa vokal benar-benar lama (> 11 detik)
         if (!root.hasSyncedLrc && !root.isFallbackLine && !root.isInstrumentalLine && root.isPlaying) {
             const elapsedSinceLine = getCurrentLineElapsedSec()
-            if (elapsedSinceLine > root.activeLineDurationSec + 3.2) {
+            if (elapsedSinceLine > Math.max(11.0, root.activeLineDurationSec + 7.5)) {
                 root.currentRawLyric = ""
                 transitionToText("", "", "", false, true)
                 return
@@ -620,7 +902,6 @@ Rectangle {
         const elapsed = getCurrentLineElapsedSec()
         const nextProgress = evaluateKaraokeProgress(elapsed)
 
-        // Jamin sapuan putih selalu bergerak maju halus tanpa pernah mundur
         if (allowBackward)
             root.karaokeProgress = nextProgress
         else
@@ -631,7 +912,7 @@ Rectangle {
         id: karaokeTicker
         interval: 16
         repeat: true
-        running: root.isPlaying && root.isIslandVisible && !root.isFallbackLine
+        running: root.isPlaying && root.isIslandVisible
         onTriggered: root.updateKaraokeFrame(false)
     }
 
@@ -655,9 +936,8 @@ Rectangle {
     Connections {
         target: root.activePlayer
         function onPositionChanged() {
-            if (root.activePlayer && root.activePlayer.position >= 0) {
-                root.applyReportedPosition(root.activePlayer.position, false, Date.now(), true)
-            }
+            // Gunakan sinyal MPRIS sebagai pemicu verifikasi posisi akurat lewat playerctl
+            root.queryPlayerctlPosition()
         }
         function onRateChanged() {
             root.anchorPlayerPos = root.getRawLivePositionSec()
@@ -751,7 +1031,7 @@ Rectangle {
 
     // --- Sinkronisasi Hover antara Kapsul Top Bar & Floating Popup ---
     function updateHoverState() {
-        if (rootHover.hovered || popupHover.hovered || volumeDragArea.pressed) {
+        if (rootHover.hovered || popupHover.hovered || volumeDragArea.pressed || progressMouse.pressed) {
             collapseTimer.stop()
             if (!root.isExpanded) {
                 root.isExpanded = true
@@ -771,12 +1051,23 @@ Rectangle {
         id: collapseTimer
         interval: 280
         onTriggered: {
-            if (!rootHover.hovered && !popupHover.hovered && !volumeDragArea.pressed)
+            if (!rootHover.hovered && !popupHover.hovered && !volumeDragArea.pressed && !progressMouse.pressed)
                 root.isExpanded = false
         }
     }
 
     // --- Kontrol Volume (MPRIS atau PipeWire wpctl fallback) ---
+    Timer {
+        id: volumeOsdHideTimer
+        interval: 1500
+        onTriggered: root.volumeOsdActive = false
+    }
+
+    function showVolumeFeedback() {
+        root.volumeOsdActive = true
+        volumeOsdHideTimer.restart()
+    }
+
     function setVolumeLevel(val) {
         const clamped = Math.max(0.0, Math.min(1.0, val))
         if (activePlayer && activePlayer.volumeSupported) {
@@ -787,6 +1078,7 @@ Rectangle {
             wpctlSetProc.command = ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", clamped.toFixed(2)]
             wpctlSetProc.running = true
         }
+        showVolumeFeedback()
     }
 
     function toggleMute() {
@@ -800,6 +1092,7 @@ Rectangle {
         } else {
             wpctlMuteProc.running = true
         }
+        showVolumeFeedback()
     }
 
     function refreshVolume() {
@@ -1070,7 +1363,7 @@ Rectangle {
     function fetchNetEaseLyrics(title, artist, durationSec, trackSnapshot) {
         const xhr = new XMLHttpRequest()
         const query = encodeURIComponent((artist ? artist + " " : "") + title)
-        const searchUrl = "https://music.163.com/api/search/get/web?s=" + query + "&type=1&limit=5"
+        const searchUrl = "https://music.163.com/api/search/get/web?s=" + query + "&type=1&limit=8"
 
         xhr.onreadystatechange = function() {
             if (xhr.readyState !== XMLHttpRequest.DONE || root.currentTrackId !== trackSnapshot)
@@ -1084,7 +1377,7 @@ Rectangle {
                 if (!Array.isArray(songs) || songs.length === 0)
                     return
 
-                let chosenId = songs[0].id
+                let chosenId = -1
                 if (durationSec > 0) {
                     let bestDiff = 999999
                     for (let i = 0; i < songs.length; i++) {
@@ -1097,9 +1390,15 @@ Rectangle {
                             }
                         }
                     }
+                    // Tolak hasil jika selisih durasi > 9 detik (mis. versi TV Size / potongan pendek)
+                    if (bestDiff > 9.0)
+                        return
+                } else {
+                    chosenId = songs[0].id
                 }
 
-                fetchNetEaseSongLyricById(chosenId, trackSnapshot)
+                if (chosenId !== -1)
+                    fetchNetEaseSongLyricById(chosenId, trackSnapshot)
             } catch (e) {}
         }
 
@@ -1142,15 +1441,15 @@ Rectangle {
         xhr.send()
     }
 
-    // Sisipkan penanda bagian instrumental pada intro, timestamp kosong, & jeda antarvokal panjang
+    // Sisipkan penanda instrumental HANYA pada intro panjang, tag instrumental, atau jeda kosong panjang (>= 11s)
     function enrichEntriesWithInstrumentalBreaks(sortedEntries) {
         if (!sortedEntries || sortedEntries.length === 0)
             return []
 
         const expanded = []
 
-        // 1. Jika intro lagu sebelum lirik pertama >= 3.5 detik, tampilkan ikon lagu di awal
-        if (sortedEntries[0].timeSec >= 3.5 && !sortedEntries[0].isInstrumental) {
+        // 1. Intro panjang sebelum lirik pertama (>= 4.5 detik)
+        if (sortedEntries[0].timeSec >= 4.5 && !sortedEntries[0].isInstrumental) {
             expanded.push({
                 timeSec: 0.0,
                 endSec: sortedEntries[0].timeSec,
@@ -1168,19 +1467,26 @@ Rectangle {
             const nextStart = (k + 1 < sortedEntries.length) ? sortedEntries[k + 1].timeSec : -1
 
             if (cur.isInstrumental) {
+                // Jangan tampilkan ikon instrumental untuk spasi antar-bait singkat (< 2.5 detik)
+                if (nextStart > 0 && (nextStart - cur.timeSec) < 2.5) {
+                    if (expanded.length > 0)
+                        expanded[expanded.length - 1].endSec = nextStart
+                    continue
+                }
                 cur.endSec = nextStart
                 expanded.push(cur)
                 continue
             }
 
-            const estVocalDur = Math.max(2.0, Math.min(6.0, cur.rawText.length * 0.14))
+            const estVocalDur = estimateNaturalVocalDurationSec(cur.rawText)
             const vocalEnd = (cur.explicitEndSec > cur.timeSec)
                 ? cur.explicitEndSec
                 : (cur.timeSec + estVocalDur)
 
-            // Jika terdapat jeda tanpa vokal >= 3.8 detik sebelum baris berikutnya (intro/reff/instrumental)
-            if (nextStart > 0 && !sortedEntries[k + 1].isInstrumental && (nextStart - vocalEnd) >= 3.8) {
-                const breakStart = vocalEnd + 0.3
+            // Hanya sisipkan jeda instrumental jika gap antarbaris sangat panjang (>= 11.0s)
+            // agar vokal panjang / nada tahan tidak pernah terpotong
+            if (nextStart > 0 && !sortedEntries[k + 1].isInstrumental && (nextStart - cur.timeSec) >= 11.0 && (nextStart - vocalEnd) >= 5.5) {
+                const breakStart = Math.max(vocalEnd + 1.0, cur.timeSec + 5.0)
                 cur.endSec = breakStart
                 expanded.push(cur)
                 expanded.push({
@@ -1199,16 +1505,16 @@ Rectangle {
             }
         }
 
-        // 2. Jika setelah lirik terakhir masih ada bagian instrumental penutup >= 5 detik
-        const trackLen = (activePlayer && activePlayer.length > 0) ? activePlayer.length : 0
+        // 2. Outro panjang setelah lirik terakhir (>= 7.5 detik)
+        const trackLen = root.trackDurationSec
         if (expanded.length > 0 && trackLen > 0) {
             const last = expanded[expanded.length - 1]
             if (!last.isInstrumental) {
                 const lastVocalEnd = (last.explicitEndSec > last.timeSec)
                     ? last.explicitEndSec
-                    : (last.timeSec + Math.max(2.0, Math.min(6.0, last.rawText.length * 0.14)))
-                if (trackLen - lastVocalEnd >= 5.0) {
-                    const outroStart = lastVocalEnd + 0.35
+                    : (last.timeSec + estimateNaturalVocalDurationSec(last.rawText))
+                if (trackLen - lastVocalEnd >= 7.5) {
+                    const outroStart = lastVocalEnd + 1.0
                     last.endSec = outroStart
                     expanded.push({
                         timeSec: outroStart,
@@ -1224,7 +1530,6 @@ Rectangle {
             }
         }
 
-        // 3. Gabungkan blok instrumental berurutan agar tidak dobel
         const finalized = []
         for (let m = 0; m < expanded.length; m++) {
             const item = expanded[m]
@@ -1339,15 +1644,16 @@ Rectangle {
                     }
                 } catch (e) {}
             }
-            searchLrclibLyrics(title, artist, trackSnapshot)
+            searchLrclibLyrics(title, artist, durationSec, trackSnapshot)
         }
         xhr.open("GET", url)
         xhr.send()
     }
 
-    function searchLrclibLyrics(title, artist, trackSnapshot) {
+    function searchLrclibLyrics(title, artist, durationSec, trackSnapshot) {
         const xhr = new XMLHttpRequest()
-        const q = encodeURIComponent((artist ? artist + " " : "") + title)
+        const cleanTitle = (title || "").replace(/\s*[\[(](official|lyrics|audio|video|mv|hd|4k)[^\])]*[\])]/gi, "").trim()
+        const q = encodeURIComponent((artist ? artist + " " : "") + cleanTitle)
         xhr.onreadystatechange = function() {
             if (xhr.readyState !== XMLHttpRequest.DONE || root.currentTrackId !== trackSnapshot)
                 return
@@ -1355,15 +1661,27 @@ Rectangle {
                 try {
                     const list = JSON.parse(xhr.responseText)
                     if (Array.isArray(list)) {
+                        let bestItem = null
+                        let bestDiff = 999999
                         for (let i = 0; i < list.length; i++) {
-                            if (list[i].syncedLyrics) {
-                                const entries = parseLrcToEntries(list[i].syncedLyrics)
-                                const hasWords = entries.length > 0 && entries[0].wordTimingsJson !== ""
-                                const prio = hasWords ? 2 : 1
-                                if (entries.length > 0 && root.lrcSourcePriority < prio) {
-                                    applyParsedLyricsToModel(entries, prio, trackSnapshot)
+                            if (!list[i].syncedLyrics)
+                                continue
+                            if (durationSec > 0 && list[i].duration > 0) {
+                                const diff = Math.abs(list[i].duration - durationSec)
+                                if (diff < bestDiff) {
+                                    bestDiff = diff
+                                    bestItem = list[i]
                                 }
-                                return
+                            } else if (!bestItem) {
+                                bestItem = list[i]
+                            }
+                        }
+                        if (bestItem && (durationSec <= 0 || bestDiff <= 9.0)) {
+                            const entries = parseLrcToEntries(bestItem.syncedLyrics)
+                            const hasWords = entries.length > 0 && entries[0].wordTimingsJson !== ""
+                            const prio = hasWords ? 2 : 1
+                            if (entries.length > 0 && root.lrcSourcePriority < prio) {
+                                applyParsedLyricsToModel(entries, prio, trackSnapshot)
                             }
                         }
                     }
@@ -1401,7 +1719,6 @@ Rectangle {
 
             const bodyWithoutLineTags = raw.replace(lineTimeRegex, "").trim()
 
-            // Baris timestamp kosong atau simbol nada -> tandai sebagai bagian instrumental
             if (isInstrumentalText(bodyWithoutLineTags)) {
                 for (let t0 = 0; t0 < timestamps.length; t0++) {
                     parsed.push({
@@ -1599,6 +1916,8 @@ Rectangle {
                 root.movingPosTicks = 0
                 root.lastReportedPos = -1.0
                 root.pendingJumpPos = -1.0
+                root.fallbackTrackLengthSec = 0.0
+                root.sliderDisplayPosSec = 0.0
                 root.karaokeProgress = 0.0
                 root.translationQueue = []
                 root.queuedSet = ({})
@@ -1631,6 +1950,8 @@ Rectangle {
             lastReportedPos = -1.0
             anchorPlayerPos = 0.0
             anchorWallMs = Date.now()
+            fallbackTrackLengthSec = 0.0
+            sliderDisplayPosSec = 0.0
             karaokeProgress = 0.0
             lastFallbackLineMs = 0
             lastFallbackCharCount = 0
@@ -1689,7 +2010,6 @@ Rectangle {
             return
         }
 
-        // Jika sptlrx mengirim baris kosong atau simbol musik di tengah lagu -> mode instrumental
         if (isInstrumentalText(newLine)) {
             root.currentRawLyric = ""
             if (root.sessionActive || root.hasActivePlayer) {
@@ -1733,7 +2053,7 @@ Rectangle {
         const initialRom = (cached && cached.romanizedText !== "") ? cached.romanizedText : instantRom
         const initialTrans = (cached && cached.translatedText !== "") ? cached.translatedText : ""
         const measureLen = Math.max(1, newLine.length, initialRom.length)
-        const estDur = Math.min(9.5, Math.max(1.2, (measureLen * root.adaptiveMsPerChar) / 1000.0))
+        const estDur = estimateNaturalVocalDurationSec(newLine)
 
         root.lastFallbackLineMs = nowMs
         root.lastFallbackCharCount = measureLen
@@ -1798,6 +2118,7 @@ Rectangle {
             syncClockAnchor(true)
             showFallbackLine()
             fetchExternalLyrics(trackTitle, trackArtist, trackAlbum, activePlayer ? activePlayer.length : 0)
+            extractColorsFromArt(albumArtUrl)
         }
     }
 
@@ -1869,11 +2190,11 @@ Rectangle {
                 slideAnim.start()
             }
 
-            readonly property real panRatio: Math.max(0, Math.min(1, (progress - 0.15) / 0.75))
+            readonly property real panRatio: Math.max(0, Math.min(1, (progress - 0.12) / 0.80))
             readonly property real origOverflow: Math.max(0, origDimText.implicitWidth - root.maxCompactLyricWidth)
             readonly property real romOverflow: Math.max(0, romDimText.implicitWidth - root.maxCompactLyricWidth)
 
-            // Tampilan Ikon Lagu saat Instrumental / Reff tanpa Vokal / Jeda Musik
+            // Tampilan Ikon Lagu saat Instrumental / Tanpa Vokal
             Row {
                 id: instrumentalRow
                 visible: lineItem.isInstrumental
@@ -1914,14 +2235,13 @@ Rectangle {
                 }
             }
 
-            // Tampilan Teks Lirik 3-Tier (Lirik Asli + Romaji + Terjemahan)
+            // Tampilan Teks Lirik 3-Tier (Compact Pill)
             Column {
                 id: linesCol
                 visible: !lineItem.isInstrumental
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 0
 
-                // 1. Baris Pertama: Lirik Asli
                 Item {
                     width: origDimText.implicitWidth
                     height: origDimText.implicitHeight
@@ -1951,7 +2271,6 @@ Rectangle {
                     }
                 }
 
-                // 2. Baris Kedua: Romaji (di bawah bahasa asli saat tombol Romaji aktif)
                 Item {
                     visible: lineItem.showSecondLine
                     width: romDimText.implicitWidth
@@ -1982,7 +2301,6 @@ Rectangle {
                     }
                 }
 
-                // 3. Baris Ketiga: Terjemahan Bahasa Indonesia (saat tombol Translate aktif)
                 Text {
                     id: subLineText
                     visible: lineItem.showThirdLine
@@ -2131,7 +2449,7 @@ Rectangle {
     }
 
     // =========================================================================
-    // 2. FLOATING POPUP WINDOW (Z-INDEX PALING ATAS, BEBAS POTONGAN TOP BAR)
+    // 2. FLOATING POPUP WINDOW (DESAIN BARU DENGAN WARNA COVER ALBUM)
     // =========================================================================
     PopupWindow {
         id: expandedPopup
@@ -2158,98 +2476,210 @@ Rectangle {
                 anchors.top: parent.top
                 width: root.expandedWidth
                 height: root.expandedHeight
-                radius: 24
-                color: Qt.lighter(root.bgColor, 1.18)
+                radius: 26
                 border.width: 1
-                border.color: root.accentColor
+                border.color: Qt.rgba(1, 1, 1, 0.09)
                 clip: true
+
+                // Latar belakang gelap di atas yang bergradasi ke cahaya warna cover album di bawah
+                gradient: Gradient {
+                    GradientStop { position: 0.00; color: "#212020" }
+                    GradientStop { position: 0.48; color: "#242222" }
+                    GradientStop {
+                        position: 0.76
+                        color: Qt.tint("#262222", Qt.rgba(root.albumGlowColor.r, root.albumGlowColor.g, root.albumGlowColor.b, 0.42))
+                    }
+                    GradientStop { position: 1.00; color: root.albumGlowColor }
+                }
 
                 opacity: Math.max(0.0, (root.expandProgress - 0.08) / 0.92)
                 scale: (0.86 + (0.14 * root.expandProgress)) * root.bounceScale
                 transformOrigin: Item.Top
 
-                ColumnLayout {
-                    width: root.expandedWidth - 28
-                    height: root.expandedHeight - 28
-                    anchors.horizontalCenter: parent.horizontalCenter
+                // =============================================================
+                // KOLOM KIRI: ALBUM ART, JUDUL/ARTIS, PROGRESS SLIDER & KONTROL
+                // =============================================================
+                Column {
+                    id: leftMediaColumn
+                    anchors.left: parent.left
+                    anchors.leftMargin: 22
                     anchors.top: parent.top
-                    anchors.topMargin: 14
-                    spacing: 9
+                    anchors.topMargin: 22
+                    width: 186
+                    spacing: 0
 
-                    // --- Baris Atas: Album Cover, Judul/Artis, & Kontrol Prev/Play/Next ---
+                    // 1. Cover Album
+                    ClippingRectangle {
+                        width: 186
+                        height: 186
+                        radius: 16
+                        color: "#2c2b2b"
+                        scale: root.isPlaying ? 1.0 : 0.96
+
+                        Behavior on scale {
+                            NumberAnimation { duration: 260; easing.type: Easing.OutCubic }
+                        }
+
+                        Image {
+                            id: expandedArt
+                            anchors.fill: parent
+                            source: root.albumArtUrl
+                            fillMode: Image.PreserveAspectCrop
+                            asynchronous: true
+                            smooth: true
+                            mipmap: true
+                            cache: true
+                            opacity: (root.albumArtUrl !== "" && status !== Image.Error) ? 1.0 : 0.0
+                        }
+
+                        Text {
+                            anchors.centerIn: parent
+                            visible: expandedArt.opacity < 0.1
+                            text: "󰎆"
+                            color: root.albumAccentColor
+                            font.pixelSize: 38
+                        }
+                    }
+
+                    // 2. Judul Lagu
+                    Text {
+                        width: parent.width
+                        topPadding: 11
+                        text: root.trackTitle !== "" ? root.trackTitle : "Tidak ada media"
+                        color: "#ffffff"
+                        font.pixelSize: 15
+                        font.weight: Font.Bold
+                        horizontalAlignment: Text.AlignHCenter
+                        elide: Text.ElideRight
+                    }
+
+                    // 3. Nama Artis
+                    Text {
+                        width: parent.width
+                        topPadding: 2
+                        text: root.trackArtist !== "" ? root.trackArtist : "MPRIS Player"
+                        color: Qt.rgba(1, 1, 1, 0.70)
+                        font.pixelSize: 12
+                        horizontalAlignment: Text.AlignHCenter
+                        elide: Text.ElideRight
+                    }
+
+                    // 4. Slider Durasi Musik (Waktu Berjalan ---o--- Total Waktu)
                     RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 12
+                        width: parent.width
+                        height: 28
+                        spacing: 7
 
-                        ClippingRectangle {
-                            Layout.preferredWidth: 50
-                            Layout.preferredHeight: 50
-                            radius: 12
-                            color: root.surfaceColor
-                            scale: root.isPlaying ? 1.0 : 0.94
-
-                            Behavior on scale {
-                                NumberAnimation { duration: 260; easing.type: Easing.OutCubic }
-                            }
-
-                            Image {
-                                id: expandedArt
-                                anchors.fill: parent
-                                source: root.albumArtUrl
-                                fillMode: Image.PreserveAspectCrop
-                                asynchronous: true
-                                smooth: true
-                                mipmap: true
-                                cache: true
-                                opacity: (root.albumArtUrl !== "" && status !== Image.Error) ? 1.0 : 0.0
-                            }
-
-                            Text {
-                                anchors.centerIn: parent
-                                visible: expandedArt.opacity < 0.1
-                                text: "󰎆"
-                                color: root.accentColor
-                                font.pixelSize: 22
-                            }
+                        Text {
+                            text: root.formatDuration(root.sliderDisplayPosSec)
+                            color: Qt.rgba(1, 1, 1, 0.75)
+                            font.pixelSize: 10
                         }
 
-                        ColumnLayout {
+                        Item {
+                            id: progressTrack
                             Layout.fillWidth: true
-                            spacing: 2
+                            height: 18
 
-                            Text {
-                                Layout.fillWidth: true
-                                text: root.trackTitle !== "" ? root.trackTitle : "Tidak ada media"
-                                color: root.lyricActiveColor
-                                font.pixelSize: 15
-                                font.weight: Font.DemiBold
-                                elide: Text.ElideRight
-                            }
-
-                            Text {
-                                Layout.fillWidth: true
-                                text: root.trackArtist !== "" ? root.trackArtist : "MPRIS Player"
-                                color: root.subTextColor
-                                font.pixelSize: 12
-                                elide: Text.ElideRight
-                            }
-                        }
-
-                        Row {
-                            spacing: 6
-                            Layout.alignment: Qt.AlignVCenter
+                            readonly property real progressRatio: root.trackDurationSec > 0
+                                ? Math.max(0.0, Math.min(1.0, root.sliderDisplayPosSec / root.trackDurationSec))
+                                : 0.0
 
                             Rectangle {
-                                width: 30
-                                height: 30
-                                radius: 15
-                                color: prevMouse.containsMouse ? root.surfaceColor : "transparent"
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: parent.width
+                                height: 5
+                                radius: 3
+                                color: Qt.rgba(1, 1, 1, 0.24)
+
+                                Rectangle {
+                                    width: parent.width * progressTrack.progressRatio
+                                    height: parent.height
+                                    radius: 3
+                                    color: root.albumSliderColor
+                                }
+                            }
+
+                            Rectangle {
+                                id: progressThumb
+                                width: progressMouse.containsMouse || progressMouse.pressed ? 12 : 9
+                                height: width
+                                radius: width / 2
+                                color: "#ebebeb"
+                                anchors.verticalCenter: parent.verticalCenter
+                                x: Math.max(0, Math.min(progressTrack.width - width, (progressTrack.width * progressTrack.progressRatio) - (width / 2)))
+
+                                Behavior on width {
+                                    NumberAnimation { duration: 120 }
+                                }
+                            }
+
+                            MouseArea {
+                                id: progressMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: root.trackDurationSec > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
+
+                                function previewSeek(mouseX) {
+                                    if (root.trackDurationSec <= 0)
+                                        return
+                                    const ratio = Math.max(0.0, Math.min(1.0, mouseX / width))
+                                    root.sliderDisplayPosSec = ratio * root.trackDurationSec
+                                }
+
+                                onPressed: mouse => {
+                                    root.isSeekingSlider = true
+                                    previewSeek(mouse.x)
+                                }
+                                onPositionChanged: mouse => {
+                                    if (pressed)
+                                        previewSeek(mouse.x)
+                                }
+                                onReleased: mouse => {
+                                    if (root.trackDurationSec > 0) {
+                                        const ratio = Math.max(0.0, Math.min(1.0, mouse.x / width))
+                                        root.seekToSeconds(ratio * root.trackDurationSec)
+                                    }
+                                    root.isSeekingSlider = false
+                                    root.updateHoverState()
+                                }
+                                onWheel: wheel => {
+                                    if (root.trackDurationSec > 0) {
+                                        const step = wheel.angleDelta.y > 0 ? 5.0 : -5.0
+                                        root.seekToSeconds(root.sliderDisplayPosSec + step)
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: root.formatDuration(root.trackDurationSec)
+                            color: Qt.rgba(1, 1, 1, 0.75)
+                            font.pixelSize: 10
+                        }
+                    }
+
+                    // 5. Kontrol Prev / Play-Pause / Next & Ikon Speaker Volume
+                    Item {
+                        width: parent.width
+                        height: 32
+
+                        Row {
+                            anchors.centerIn: parent
+                            anchors.horizontalCenterOffset: -10
+                            spacing: 16
+
+                            // Tombol Previous
+                            Item {
+                                width: 26
+                                height: 26
+                                anchors.verticalCenter: parent.verticalCenter
 
                                 Text {
                                     anchors.centerIn: parent
                                     text: "󰒮"
-                                    color: root.lyricActiveColor
-                                    font.pixelSize: 15
+                                    color: prevMouse.containsMouse ? "#ffffff" : Qt.rgba(1, 1, 1, 0.88)
+                                    font.pixelSize: 16
                                 }
 
                                 MouseArea {
@@ -2261,23 +2691,22 @@ Rectangle {
                                 }
                             }
 
-                            Rectangle {
-                                width: 34
-                                height: 34
-                                radius: 17
-                                color: playMouse.containsMouse ? Qt.lighter(root.accentColor, 1.12) : root.accentColor
-                                scale: playMouse.pressed ? 0.90 : 1.0
+                            // Tombol Play / Pause
+                            Item {
+                                width: 30
+                                height: 30
+                                anchors.verticalCenter: parent.verticalCenter
+                                scale: playMouse.pressed ? 0.88 : 1.0
 
                                 Behavior on scale {
-                                    NumberAnimation { duration: 150; easing.type: Easing.OutBack }
+                                    NumberAnimation { duration: 140; easing.type: Easing.OutBack }
                                 }
 
                                 Text {
                                     anchors.centerIn: parent
                                     text: root.isPlaying ? "󰏤" : "󰐊"
-                                    color: root.bgColor
-                                    font.pixelSize: 16
-                                    font.weight: Font.Bold
+                                    color: "#ffffff"
+                                    font.pixelSize: 21
                                 }
 
                                 MouseArea {
@@ -2289,17 +2718,17 @@ Rectangle {
                                 }
                             }
 
-                            Rectangle {
-                                width: 30
-                                height: 30
-                                radius: 15
-                                color: nextMouse.containsMouse ? root.surfaceColor : "transparent"
+                            // Tombol Next
+                            Item {
+                                width: 26
+                                height: 26
+                                anchors.verticalCenter: parent.verticalCenter
 
                                 Text {
                                     anchors.centerIn: parent
                                     text: "󰒭"
-                                    color: root.lyricActiveColor
-                                    font.pixelSize: 15
+                                    color: nextMouse.containsMouse ? "#ffffff" : Qt.rgba(1, 1, 1, 0.88)
+                                    font.pixelSize: 16
                                 }
 
                                 MouseArea {
@@ -2311,63 +2740,90 @@ Rectangle {
                                 }
                             }
                         }
-                    }
 
-                    // --- Baris Tengah: Volume Slider ---
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 8
+                        // Ikon Speaker Volume di sisi kanan baris kontrol
+                        Item {
+                            id: speakerControl
+                            width: 28
+                            height: 28
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
 
-                        Text {
-                            text: root.currentVolume <= 0.01 ? "󰖁" : (root.currentVolume < 0.5 ? "󰖀" : "󰕾")
-                            color: root.subTextColor
-                            font.pixelSize: 14
+                            Text {
+                                anchors.centerIn: parent
+                                text: root.currentVolume <= 0.01 ? "󰖁" : (root.currentVolume < 0.5 ? "󰖀" : "󰕾")
+                                color: speakerMouse.containsMouse ? "#ffffff" : Qt.rgba(1, 1, 1, 0.90)
+                                font.pixelSize: 16
+                            }
 
                             MouseArea {
+                                id: speakerMouse
                                 anchors.fill: parent
+                                hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: root.toggleMute()
+                                onWheel: wheel => {
+                                    const delta = wheel.angleDelta.y > 0 ? 0.05 : -0.05
+                                    root.setVolumeLevel(root.currentVolume + delta)
+                                }
                             }
+                        }
+                    }
+                }
+
+                // Popover Volume Halus (Muncul saat kursor di atas speaker atau saat scroll volume)
+                Rectangle {
+                    id: volumePopover
+                    visible: opacity > 0.01
+                    opacity: (speakerMouse.containsMouse || volumePopoverHover.hovered || volumeDragArea.pressed || root.volumeOsdActive) ? 1.0 : 0.0
+                    anchors.left: leftMediaColumn.left
+                    anchors.bottom: leftMediaColumn.bottom
+                    anchors.bottomMargin: 32
+                    width: leftMediaColumn.width
+                    height: 28
+                    radius: 14
+                    color: Qt.rgba(0.11, 0.11, 0.11, 0.92)
+                    border.width: 1
+                    border.color: Qt.rgba(1, 1, 1, 0.14)
+                    z: 10
+
+                    Behavior on opacity {
+                        NumberAnimation { duration: 180 }
+                    }
+
+                    HoverHandler {
+                        id: volumePopoverHover
+                    }
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 10
+                        anchors.rightMargin: 10
+                        spacing: 6
+
+                        Text {
+                            text: root.currentVolume <= 0.01 ? "󰖁" : "󰕾"
+                            color: root.albumSliderColor
+                            font.pixelSize: 12
                         }
 
                         Item {
                             id: volumeTrack
                             Layout.fillWidth: true
-                            height: 18
+                            height: 16
 
                             Rectangle {
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: parent.width
-                                height: 5
-                                radius: 3
-                                color: root.surfaceColor
+                                height: 4
+                                radius: 2
+                                color: Qt.rgba(1, 1, 1, 0.22)
 
                                 Rectangle {
                                     width: parent.width * root.currentVolume
                                     height: parent.height
-                                    radius: 3
-                                    color: root.accentColor
-
-                                    Behavior on width {
-                                        enabled: !volumeDragArea.pressed
-                                        NumberAnimation { duration: 120 }
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                id: volumeThumb
-                                width: volumeDragArea.containsMouse || volumeDragArea.pressed ? 13 : 10
-                                height: width
-                                radius: width / 2
-                                color: root.lyricActiveColor
-                                border.width: 2
-                                border.color: root.accentColor
-                                anchors.verticalCenter: parent.verticalCenter
-                                x: Math.max(0, Math.min(volumeTrack.width - width, (volumeTrack.width * root.currentVolume) - (width / 2)))
-
-                                Behavior on width {
-                                    NumberAnimation { duration: 120 }
+                                    radius: 2
+                                    color: root.albumSliderColor
                                 }
                             }
 
@@ -2397,340 +2853,279 @@ Rectangle {
 
                         Text {
                             text: Math.round(root.currentVolume * 100) + "%"
-                            color: root.subTextColor
-                            font.pixelSize: 11
-                            Layout.preferredWidth: 30
+                            color: "#ffffff"
+                            font.pixelSize: 10
+                            Layout.preferredWidth: 26
                             horizontalAlignment: Text.AlignRight
                         }
                     }
+                }
 
-                    // --- Baris 2 Tombol Mode Lirik: Nyalakan Translate & Aktifkan Romaji ---
-                    RowLayout {
-                        Layout.fillWidth: true
+                // =============================================================
+                // KOLOM KANAN: DAFTAR LIRIK RATA KIRI (3-TIER KARAOKE)
+                // =============================================================
+                Item {
+                    id: rightLyricsContainer
+                    anchors.left: leftMediaColumn.right
+                    anchors.leftMargin: 22
+                    anchors.right: parent.right
+                    anchors.rightMargin: 22
+                    anchors.top: parent.top
+                    anchors.topMargin: 22
+                    anchors.bottom: bottomActionRow.top
+                    anchors.bottomMargin: 14
+                    clip: true
+
+                    // Indikator saat model kosong (loading / instrumental)
+                    Column {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.topMargin: 16
+                        visible: lyricModel.count === 0
                         spacing: 8
 
-                        // 1. Tombol Nyalakan Translate
-                        Rectangle {
-                            id: btnTranslate
-                            Layout.fillWidth: true
-                            height: 28
-                            radius: 14
-                            scale: transBtnMouse.pressed ? 0.94 : 1.0
-                            color: root.showTranslate
-                                ? Qt.rgba(0.51, 0.67, 1.0, 0.22)
-                                : (transBtnMouse.containsMouse ? root.surfaceColor : Qt.rgba(1, 1, 1, 0.04))
-                            border.width: 1
-                            border.color: root.showTranslate ? root.accentColor : Qt.rgba(1, 1, 1, 0.1)
-
-                            Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutBack } }
-                            Behavior on color { ColorAnimation { duration: 150 } }
-                            Behavior on border.color { ColorAnimation { duration: 150 } }
-
-                            Row {
-                                anchors.centerIn: parent
-                                spacing: 6
-
-                                Text {
-                                    text: "󰗊"
-                                    color: root.showTranslate ? root.accentColor : root.subTextColor
-                                    font.pixelSize: 13
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                Text {
-                                    text: "Translate"
-                                    color: root.showTranslate ? root.lyricActiveColor : root.subTextColor
-                                    font.pixelSize: 12
-                                    font.weight: root.showTranslate ? Font.DemiBold : Font.Normal
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                            }
-
-                            MouseArea {
-                                id: transBtnMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    root.showTranslate = !root.showTranslate
-                                    if (root.showTranslate)
-                                        root.ensureCurrentAndModelTranslated()
-                                }
-                            }
+                        Text {
+                            text: root.isInstrumentalLine ? "󰎇   • • •   󰎇" : (root.displayedRawText !== "" ? root.displayedRawText : "Menunggu lirik...")
+                            color: root.isInstrumentalLine ? root.albumSliderColor : Qt.rgba(1, 1, 1, 0.72)
+                            font.pixelSize: root.isInstrumentalLine ? 18 : 15
+                            font.weight: Font.Bold
+                            wrapMode: Text.WordWrap
+                            width: parent.width
                         }
+                    }
 
-                        // 2. Tombol Aktifkan Romaji (di bawah bahasa asli)
-                        Rectangle {
-                            id: btnRomajiSub
-                            Layout.fillWidth: true
-                            height: 28
-                            radius: 14
-                            scale: romSubBtnMouse.pressed ? 0.94 : 1.0
-                            color: root.showRomajiSubline
-                                ? Qt.rgba(0.51, 0.67, 1.0, 0.22)
-                                : (romSubBtnMouse.containsMouse ? root.surfaceColor : Qt.rgba(1, 1, 1, 0.04))
-                            border.width: 1
-                            border.color: root.showRomajiSubline ? root.accentColor : Qt.rgba(1, 1, 1, 0.1)
+                    ListView {
+                        id: fullLyricsView
+                        anchors.fill: parent
+                        model: lyricModel
+                        spacing: 18
+                        clip: true
+                        interactive: true
+                        boundsBehavior: Flickable.StopAtBounds
 
-                            Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutBack } }
-                            Behavior on color { ColorAnimation { duration: 150 } }
-                            Behavior on border.color { ColorAnimation { duration: 150 } }
+                        // Posisikan baris lirik aktif di bagian atas sejajar cover album
+                        currentIndex: root.activeLyricIndex
+                        preferredHighlightBegin: 0
+                        preferredHighlightEnd: height * 0.42
+                        highlightRangeMode: ListView.StrictlyEnforceRange
+                        highlightMoveDuration: 360
+                        highlightMoveVelocity: -1
 
+                        delegate: Item {
+                            id: rowDelegate
+                            required property int index
+                            required property string rawText
+                            required property string romanizedText
+                            required property string translatedText
+                            required property real timeSec
+                            required property bool isInstrumental
+
+                            readonly property bool isCurrent: index === root.activeLyricIndex
+                            readonly property bool showSecondRom: !isInstrumental && root.showRomajiSubline && romanizedText !== ""
+                            readonly property bool showThirdTrans: !isInstrumental && root.showTranslate && translatedText !== ""
+
+                            width: fullLyricsView.width
+                            height: (isInstrumental ? instrumentalDelegateRow.implicitHeight : lyricRowColumn.implicitHeight) + 2
+
+                            layer.enabled: !isCurrent
+                            layer.effect: MultiEffect {
+                                blurEnabled: true
+                                blur: 0.46
+                                blurMax: 14
+                                brightness: -0.22
+                            }
+
+                            opacity: isCurrent ? 1.0 : 0.48
+                            scale: isCurrent ? 1.0 : 0.97
+                            transformOrigin: Item.Left
+
+                            Behavior on opacity {
+                                NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+                            }
+                            Behavior on scale {
+                                NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+                            }
+
+                            // Baris Indikator Instrumental / Tanpa Vokal
                             Row {
-                                anchors.centerIn: parent
-                                spacing: 6
+                                id: instrumentalDelegateRow
+                                visible: rowDelegate.isInstrumental
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 10
 
                                 Text {
-                                    text: "Aa"
-                                    color: root.showRomajiSubline ? root.accentColor : root.subTextColor
-                                    font.pixelSize: 12
+                                    text: "󰎇"
+                                    color: rowDelegate.isCurrent ? root.albumSliderColor : Qt.rgba(1, 1, 1, 0.55)
+                                    font.pixelSize: 16
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                Text {
+                                    text: "• • •"
+                                    color: rowDelegate.isCurrent ? "#ffffff" : Qt.rgba(1, 1, 1, 0.55)
+                                    font.pixelSize: 14
                                     font.weight: Font.Bold
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
+                            }
 
+                            // Baris Lirik 3-Tier (Multi-Line Karaoke Sweep)
+                            Column {
+                                id: lyricRowColumn
+                                visible: !rowDelegate.isInstrumental
+                                width: parent.width
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 4
+
+                                // 1. Bahasa Asli (Sapuan Putih per Karakter, Mendukung Multi-Baris)
                                 Text {
-                                    text: "Romaji"
-                                    color: root.showRomajiSubline ? root.lyricActiveColor : root.subTextColor
+                                    width: parent.width
+                                    textFormat: Text.RichText
+                                    wrapMode: Text.WordWrap
+                                    horizontalAlignment: Text.AlignLeft
+                                    lineHeight: 1.15
+                                    font.pixelSize: rowDelegate.isCurrent ? 17 : 16
+                                    font.weight: Font.Bold
+                                    text: rowDelegate.isCurrent
+                                        ? root.buildRichKaraokeText(rowDelegate.rawText, root.karaokeProgress, "#ffffff", "#636262")
+                                        : "<font color=\"#a8a8a8\">" + root.escapeHtml(rowDelegate.rawText) + "</font>"
+                                }
+
+                                // 2. Romaji (Sapuan Warna Cover Album per Karakter)
+                                Text {
+                                    visible: rowDelegate.showSecondRom
+                                    width: parent.width
+                                    textFormat: Text.RichText
+                                    wrapMode: Text.WordWrap
+                                    horizontalAlignment: Text.AlignLeft
+                                    lineHeight: 1.15
+                                    font.pixelSize: rowDelegate.isCurrent ? 13 : 12
+                                    font.weight: Font.DemiBold
+                                    text: {
+                                        const activeHex = root.albumAccentColor.toString()
+                                        const dimHex = Qt.darker(root.albumAccentColor, 2.15).toString()
+                                        return rowDelegate.isCurrent
+                                            ? root.buildRichKaraokeText(rowDelegate.romanizedText, root.karaokeProgress, activeHex, dimHex)
+                                            : "<font color=\"" + activeHex + "\">" + root.escapeHtml(rowDelegate.romanizedText) + "</font>"
+                                    }
+                                }
+
+                                // 3. Terjemahan Bahasa Indonesia
+                                Text {
+                                    visible: rowDelegate.showThirdTrans
+                                    width: parent.width
+                                    text: rowDelegate.translatedText
+                                    wrapMode: Text.WordWrap
+                                    horizontalAlignment: Text.AlignLeft
+                                    lineHeight: 1.2
+                                    color: rowDelegate.isCurrent ? Qt.rgba(1, 1, 1, 0.82) : Qt.rgba(1, 1, 1, 0.62)
                                     font.pixelSize: 12
-                                    font.weight: root.showRomajiSubline ? Font.DemiBold : Font.Normal
-                                    anchors.verticalCenter: parent.verticalCenter
                                 }
                             }
 
                             MouseArea {
-                                id: romSubBtnMouse
                                 anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
+                                cursorShape: rowDelegate.timeSec >= 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
                                 onClicked: {
-                                    root.showRomajiSubline = !root.showRomajiSubline
-                                    if (root.showRomajiSubline)
-                                        root.ensureCurrentAndModelTranslated()
+                                    if (rowDelegate.timeSec >= 0) {
+                                        root.seekToSeconds(rowDelegate.timeSec)
+                                        root.activateSyncedIndex(rowDelegate.index, false)
+                                    }
                                 }
                             }
                         }
                     }
+                }
 
-                    // Garis Pemisah Halus
+                // =============================================================
+                // BARIS BAWAH: 2 TOMBOL PILL ("Translate" & "Romaji")
+                // =============================================================
+                Row {
+                    id: bottomActionRow
+                    anchors.left: parent.left
+                    anchors.leftMargin: 22
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 20
+                    spacing: 12
+
+                    // 1. Tombol Translate
                     Rectangle {
-                        Layout.fillWidth: true
-                        height: 1
-                        color: Qt.rgba(1, 1, 1, 0.08)
-                    }
+                        id: btnTranslate
+                        width: 142
+                        height: 38
+                        radius: 19
+                        scale: transBtnMouse.pressed ? 0.95 : 1.0
+                        color: root.showTranslate
+                            ? root.albumButtonFill
+                            : Qt.rgba(root.albumButtonFill.r, root.albumButtonFill.g, root.albumButtonFill.b, 0.16)
+                        border.width: 2
+                        border.color: root.showTranslate
+                            ? root.albumButtonBorder
+                            : Qt.rgba(root.albumButtonBorder.r, root.albumButtonBorder.g, root.albumButtonBorder.b, 0.55)
 
-                    // --- Area Bawah: Daftar Lirik Sinkron (Bahasa Asli + Romaji + Translate) ---
-                    Item {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        clip: true
+                        Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutBack } }
+                        Behavior on color { ColorAnimation { duration: 180 } }
+                        Behavior on border.color { ColorAnimation { duration: 180 } }
 
                         Text {
                             anchors.centerIn: parent
-                            visible: lyricModel.count === 0
-                            text: root.isInstrumentalLine ? "󰎇   • • •   󰎇" : (root.displayedRawText !== "" ? root.displayedRawText : "Menunggu lirik...")
-                            color: root.isInstrumentalLine ? root.accentColor : root.subTextColor
-                            font.pixelSize: root.isInstrumentalLine ? 16 : 13
+                            text: "Translate"
+                            color: root.showTranslate ? "#ffffff" : Qt.rgba(1, 1, 1, 0.80)
+                            font.pixelSize: 13
+                            font.weight: Font.Bold
                         }
 
-                        ListView {
-                            id: fullLyricsView
+                        MouseArea {
+                            id: transBtnMouse
                             anchors.fill: parent
-                            model: lyricModel
-                            spacing: 12
-                            clip: true
-                            interactive: true
-                            boundsBehavior: Flickable.StopAtBounds
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.showTranslate = !root.showTranslate
+                                if (root.showTranslate)
+                                    root.ensureCurrentAndModelTranslated()
+                            }
+                        }
+                    }
 
-                            currentIndex: root.activeLyricIndex
-                            preferredHighlightBegin: height * 0.30
-                            preferredHighlightEnd: height * 0.70
-                            highlightRangeMode: ListView.StrictlyEnforceRange
-                            highlightMoveDuration: 360
-                            highlightMoveVelocity: -1
+                    // 2. Tombol Romaji
+                    Rectangle {
+                        id: btnRomajiSub
+                        width: 142
+                        height: 38
+                        radius: 19
+                        scale: romSubBtnMouse.pressed ? 0.95 : 1.0
+                        color: root.showRomajiSubline
+                            ? Qt.rgba(root.albumButtonFill.r, root.albumButtonFill.g, root.albumButtonFill.b, 0.52)
+                            : Qt.rgba(root.albumButtonFill.r, root.albumButtonFill.g, root.albumButtonFill.b, 0.14)
+                        border.width: 2
+                        border.color: root.showRomajiSubline
+                            ? root.albumButtonBorder
+                            : Qt.rgba(root.albumButtonBorder.r, root.albumButtonBorder.g, root.albumButtonBorder.b, 0.50)
 
-                            delegate: Item {
-                                id: rowDelegate
-                                required property int index
-                                required property string rawText
-                                required property string romanizedText
-                                required property string translatedText
-                                required property real timeSec
-                                required property bool isInstrumental
+                        Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutBack } }
+                        Behavior on color { ColorAnimation { duration: 180 } }
+                        Behavior on border.color { ColorAnimation { duration: 180 } }
 
-                                readonly property bool isCurrent: index === root.activeLyricIndex
-                                readonly property bool showSecondRom: !isInstrumental && root.showRomajiSubline && romanizedText !== ""
-                                readonly property bool showThirdTrans: !isInstrumental && root.showTranslate && translatedText !== ""
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Romaji"
+                            color: root.showRomajiSubline ? "#ffffff" : Qt.rgba(1, 1, 1, 0.80)
+                            font.pixelSize: 13
+                            font.weight: Font.Bold
+                        }
 
-                                width: fullLyricsView.width
-                                height: (isInstrumental ? instrumentalDelegateRow.implicitHeight : lyricRowColumn.implicitHeight) + 4
-
-                                layer.enabled: !isCurrent
-                                layer.effect: MultiEffect {
-                                    blurEnabled: true
-                                    blur: 0.48
-                                    blurMax: 16
-                                    brightness: -0.35
-                                }
-
-                                opacity: isCurrent ? 1.0 : 0.5
-                                scale: isCurrent ? 1.0 : 0.94
-
-                                Behavior on opacity {
-                                    NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
-                                }
-                                Behavior on scale {
-                                    NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
-                                }
-
-                                // Baris Indikator Instrumental / Tanpa Vokal di Daftar Lirik
-                                Row {
-                                    id: instrumentalDelegateRow
-                                    visible: rowDelegate.isInstrumental
-                                    anchors.centerIn: parent
-                                    spacing: 10
-
-                                    Text {
-                                        text: "󰎇"
-                                        color: rowDelegate.isCurrent ? root.accentColor : root.subTextColor
-                                        font.pixelSize: 15
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-
-                                    Text {
-                                        text: "• • •"
-                                        color: rowDelegate.isCurrent ? root.lyricActiveColor : root.subTextColor
-                                        font.pixelSize: 13
-                                        font.weight: Font.Bold
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-
-                                    Text {
-                                        text: "󰎇"
-                                        color: rowDelegate.isCurrent ? root.accentColor : root.subTextColor
-                                        font.pixelSize: 15
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                }
-
-                                Column {
-                                    id: lyricRowColumn
-                                    visible: !rowDelegate.isInstrumental
-                                    width: parent.width
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    spacing: 2
-
-                                    // 1. Baris Pertama: Bahasa Asli
-                                    Item {
-                                        width: parent.width
-                                        implicitHeight: baseLineText.implicitHeight
-
-                                        Text {
-                                            id: baseLineText
-                                            width: parent.width
-                                            text: rowDelegate.rawText
-                                            wrapMode: Text.WordWrap
-                                            horizontalAlignment: Text.AlignHCenter
-                                            color: rowDelegate.isCurrent ? root.lyricDimColor : root.lyricActiveColor
-                                            font.pixelSize: rowDelegate.isCurrent ? 14 : 13
-                                            font.weight: rowDelegate.isCurrent ? Font.Bold : Font.Medium
-                                        }
-
-                                        Item {
-                                            id: baseClipBox
-                                            visible: rowDelegate.isCurrent
-                                            readonly property real activeSpanW: baseLineText.lineCount === 1
-                                                ? baseLineText.contentWidth
-                                                : baseLineText.width
-                                            x: baseLineText.lineCount === 1
-                                                ? Math.max(0, (baseLineText.width - baseLineText.contentWidth) * 0.5)
-                                                : 0
-                                            anchors.top: baseLineText.top
-                                            anchors.bottom: baseLineText.bottom
-                                            width: activeSpanW * root.karaokeProgress
-                                            clip: true
-
-                                            Text {
-                                                x: -baseClipBox.x
-                                                width: baseLineText.width
-                                                text: rowDelegate.rawText
-                                                wrapMode: Text.WordWrap
-                                                horizontalAlignment: Text.AlignHCenter
-                                                color: root.lyricActiveColor
-                                                font.pixelSize: 14
-                                                font.weight: Font.Bold
-                                            }
-                                        }
-                                    }
-
-                                    // 2. Baris Kedua: Romaji
-                                    Item {
-                                        visible: rowDelegate.showSecondRom
-                                        width: parent.width
-                                        implicitHeight: romLineBase.implicitHeight
-
-                                        Text {
-                                            id: romLineBase
-                                            width: parent.width
-                                            text: rowDelegate.romanizedText
-                                            wrapMode: Text.WordWrap
-                                            horizontalAlignment: Text.AlignHCenter
-                                            color: rowDelegate.isCurrent ? Qt.rgba(0.51, 0.67, 1.0, 0.38) : root.accentColor
-                                            font.pixelSize: rowDelegate.isCurrent ? 12 : 11
-                                            font.weight: Font.Medium
-                                        }
-
-                                        Item {
-                                            id: romClipBox
-                                            visible: rowDelegate.isCurrent
-                                            readonly property real activeRomSpanW: romLineBase.lineCount === 1
-                                                ? romLineBase.contentWidth
-                                                : romLineBase.width
-                                            x: romLineBase.lineCount === 1
-                                                ? Math.max(0, (romLineBase.width - romLineBase.contentWidth) * 0.5)
-                                                : 0
-                                            anchors.top: romLineBase.top
-                                            anchors.bottom: romLineBase.bottom
-                                            width: activeRomSpanW * root.karaokeProgress
-                                            clip: true
-
-                                            Text {
-                                                x: -romClipBox.x
-                                                width: romLineBase.width
-                                                text: rowDelegate.romanizedText
-                                                wrapMode: Text.WordWrap
-                                                horizontalAlignment: Text.AlignHCenter
-                                                color: root.accentColor
-                                                font.pixelSize: 12
-                                                font.weight: Font.Medium
-                                            }
-                                        }
-                                    }
-
-                                    // 3. Baris Ketiga: Terjemahan Bahasa Indonesia
-                                    Text {
-                                        visible: rowDelegate.showThirdTrans
-                                        width: parent.width
-                                        text: rowDelegate.translatedText
-                                        wrapMode: Text.WordWrap
-                                        horizontalAlignment: Text.AlignHCenter
-                                        color: root.subTextColor
-                                        font.pixelSize: 11
-                                        font.italic: true
-                                    }
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: rowDelegate.timeSec >= 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                    onClicked: {
-                                        if (rowDelegate.timeSec >= 0 && root.activePlayer && root.activePlayer.canSeek) {
-                                            const delta = rowDelegate.timeSec - root.activePlayer.position
-                                            root.activePlayer.seek(delta)
-                                            root.applyReportedPosition(rowDelegate.timeSec, true, Date.now(), false)
-                                            root.activateSyncedIndex(rowDelegate.index, false)
-                                        }
-                                    }
-                                }
+                        MouseArea {
+                            id: romSubBtnMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.showRomajiSubline = !root.showRomajiSubline
+                                if (root.showRomajiSubline)
+                                    root.ensureCurrentAndModelTranslated()
                             }
                         }
                     }
