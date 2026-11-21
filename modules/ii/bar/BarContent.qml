@@ -493,6 +493,10 @@ Item {
                     delegate: middleBarGroupDelegate
                 }
 
+                //LyricsWidget {
+                //    Layout.fillHeight: true
+                //}
+
                 Component {
                     id: middleBarGroupDelegate
                     BarGroup {
