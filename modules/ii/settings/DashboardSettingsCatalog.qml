@@ -124,6 +124,9 @@ QtObject {
         "bar:Icon color": { type: "select", get: () => Config.options.custom.iconColor, set: v => { Config.options.custom.iconColor = v; }, get options() { return ["onLayer0", "primary", "secondary", "tertiary", "onPrimaryContainer", "onSecondaryContainer", "onTertiaryContainer"].map(name => ({ value: name, color: roleColor(name) })); } },
         "bar:Icons folder": { type: "text", get: () => Config.options.custom.iconsPath, set: v => { Config.options.custom.iconsPath = v; } },
         "bar:Preferred player": { type: "text", get: () => Config.options.bar.media.preferredPlayer, set: v => { Config.options.bar.media.preferredPlayer = v; } },
+        "bar:Show lyrics widget": { type: "switch", get: () => Config.lyricsWidgetInLayout, set: v => Config.setLyricsWidgetEnabled(v) },
+        "bar:Placement": { type: "select", get: () => Config.options.bar.lyricsWidget?.mode ?? "notch", set: v => { Config.options.bar.lyricsWidget.mode = v; }, options: [{ displayName: Translation.tr("Notch"), icon: "crop_landscape", value: "notch" }, { displayName: Translation.tr("Floating island"), icon: "web_asset", value: "floating" }] },
+        "bar:Use album cover color": { type: "switch", get: () => Config.options.bar.lyricsWidget?.useAlbumColor ?? true, set: v => { Config.options.bar.lyricsWidget.useAlbumColor = v; } },
         "hyprland:Active border color": { type: "select", get: () => Config.options.hyprland.general.borderColor.activeRole, set: v => { Config.options.hyprland.general.borderColor.activeRole = v; HyprlandConfig.applyBorderColors(); }, get options() { return ["primary", "secondary", "tertiary", "primaryContainer", "secondaryContainer", "tertiaryContainer", "layer0Border"].map(name => ({ value: name, color: roleColor(name) })); } },
         "hyprland:Active border opacity": { type: "spin", get: () => Math.round(Config.options.hyprland.general.borderColor.activeOpacity * 100), set: v => { Config.options.hyprland.general.borderColor.activeOpacity = v / 100.0; HyprlandConfig.applyBorderColors(); }, from: 0, to: 100, stepSize: 5 },
         "hyprland:Inactive border color": { type: "select", get: () => Config.options.hyprland.general.borderColor.inactiveRole, set: v => { Config.options.hyprland.general.borderColor.inactiveRole = v; HyprlandConfig.applyBorderColors(); }, get options() { return ["primary", "secondary", "tertiary", "primaryContainer", "secondaryContainer", "tertiaryContainer", "layer0Border"].map(name => ({ value: name, color: roleColor(name) })); } },
@@ -332,6 +335,13 @@ QtObject {
                 { type: "toggle", key: "bar:Pin media controls", title: Translation.tr("Pin media controls"), icon: "push_pin" },
                 { type: "toggle", key: "bar:Show only title", title: Translation.tr("Only title"), icon: "title" },
                 { type: "spin", key: "bar:Max media width", title: Translation.tr("Max media width"), icon: "width" }
+            ]
+        },
+        {
+            page: Translation.tr("Bar"), title: Translation.tr("Lyrics widget"), icon: "lyrics", kw: "lyric lyrics song karaoke", cards: [
+                { type: "toggle", key: "bar:Show lyrics widget", title: Translation.tr("Show lyrics widget"), icon: "visibility", kw: "lyrics enable disable show hide" },
+                { type: "select", key: "bar:Placement", title: Translation.tr("Placement"), icon: "dashboard_customize", kw: "notch floating island position" },
+                { type: "toggle", key: "bar:Use album cover color", title: Translation.tr("Use album cover color"), icon: "palette", kw: "album art cover accent tint" }
             ]
         },
         {

@@ -37,14 +37,13 @@ Item {
     readonly property bool trayHasItems: SystemTray.items.values.length > 0
 
     function filterLayout(layout) {
-        const lyricsEnabled = Config.options.bar.lyricsWidget?.enable ?? false
         const lyricsFloating = ["floating", "floating-island"].includes(Config.options.bar.lyricsWidget?.mode ?? "notch")
 
         return layout.filter(name => {
             if (name === "sysTray")
                 return trayHasItems
-            if (name === "lyricsWidget")
-                return lyricsEnabled && !lyricsFloating
+            if (Config.isLyricsWidgetId(name))
+                return !lyricsFloating
             return true
         })
     }

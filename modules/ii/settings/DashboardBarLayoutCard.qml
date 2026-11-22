@@ -16,7 +16,9 @@ DashboardCard {
     readonly property var leftList: Array.from(barConfig.layouts.leftLayout)
     readonly property var middleList: Array.from(barConfig.layouts.middleLayout)
     readonly property var rightList: Array.from(barConfig.layouts.rightLayout)
-    readonly property var usedIds: leftList.concat(middleList, rightList)
+    readonly property var usedIds: leftList.concat(middleList, rightList).map(id =>
+        Config.isLyricsWidgetId(id) ? "lyricsWidget" : id
+    )
 
     readonly property var lanes: [
         { id: "left", title: vertical ? Translation.tr("Top") : Translation.tr("Left"), icon: vertical ? "align_vertical_top" : "align_horizontal_left", list: leftList },
@@ -136,6 +138,17 @@ DashboardCard {
         return true;
     }
 
+    function writeLayouts(lists) {
+        const layouts = Config.options.bar.layouts;
+        const left = Config.normalizeBarLayout(lists.left);
+        const middle = Config.normalizeBarLayout(lists.middle);
+        const right = Config.normalizeBarLayout(lists.right);
+        if (JSON.stringify(left) !== JSON.stringify(leftList)) layouts.leftLayout = left;
+        if (JSON.stringify(middle) !== JSON.stringify(middleList)) layouts.middleLayout = middle;
+        if (JSON.stringify(right) !== JSON.stringify(rightList)) layouts.rightLayout = right;
+        Config.syncLyricsWidgetEnable();
+    }
+
     function laneItem(laneId) {
         for (let i = 0; i < laneRepeater.count; i++) {
             const lane = laneRepeater.itemAt(i);
@@ -203,12 +216,7 @@ DashboardCard {
         if (info.from !== "tray") lists[info.from].splice(info.fromIndex, 1);
         if (target !== "tray") lists[target].splice(index, 0, info.id);
 
-        Qt.callLater(() => {
-            const layouts = Config.options.bar.layouts;
-            if (JSON.stringify(lists.left) !== JSON.stringify(leftList)) layouts.leftLayout = lists.left;
-            if (JSON.stringify(lists.middle) !== JSON.stringify(middleList)) layouts.middleLayout = lists.middle;
-            if (JSON.stringify(lists.right) !== JSON.stringify(rightList)) layouts.rightLayout = lists.right;
-        });
+        Qt.callLater(() => root.writeLayouts(lists));
     }
 
     property bool confirmClear: false
@@ -221,23 +229,13 @@ DashboardCard {
 
     function clearAll() {
         confirmClear = false;
-        Qt.callLater(() => {
-            const layouts = Config.options.bar.layouts;
-            layouts.leftLayout = [];
-            layouts.middleLayout = [];
-            layouts.rightLayout = [];
-        });
+        Qt.callLater(() => root.writeLayouts({ left: [], middle: [], right: [] }));
     }
 
     function removeWidget(laneId, index) {
         const lists = { left: leftList.slice(), middle: middleList.slice(), right: rightList.slice() };
         lists[laneId].splice(index, 1);
-        Qt.callLater(() => {
-            const layouts = Config.options.bar.layouts;
-            if (laneId === "left") layouts.leftLayout = lists.left;
-            else if (laneId === "middle") layouts.middleLayout = lists.middle;
-            else layouts.rightLayout = lists.right;
-        });
+        Qt.callLater(() => root.writeLayouts(lists));
     }
 
     component Chip: Rectangle {

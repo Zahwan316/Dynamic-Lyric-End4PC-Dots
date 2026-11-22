@@ -19,7 +19,7 @@ Scope {
         LazyLoader {
             id: islandLoader
             active: !Config.options.bar.vertical
-                && (Config.options.bar.lyricsWidget?.enable ?? false)
+                && Config.lyricsWidgetInLayout
                 && ["floating", "floating-island"].includes(Config.options.bar.lyricsWidget?.mode ?? "notch")
                 && GlobalStates.barOpen
                 && !GlobalStates.screenLocked

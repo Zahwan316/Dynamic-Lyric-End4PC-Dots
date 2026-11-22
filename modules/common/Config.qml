@@ -43,6 +43,46 @@ Singleton {
         obj[keys[keys.length - 1]] = convertedValue;
     }
 
+    // --- Lyrics widget: layout-driven visibility helpers ---
+    readonly property var lyricsLayoutKeys: ["leftLayout", "middleLayout", "rightLayout"]
+
+    function isLyricsWidgetId(id) {
+        return String(id ?? "").toLowerCase() === "lyricswidget"
+    }
+
+    function normalizeBarWidgetId(id) {
+        return root.isLyricsWidgetId(id) ? "lyricsWidget" : id
+    }
+
+    function normalizeBarLayout(layout) {
+        return Array.from(layout ?? [], id => root.normalizeBarWidgetId(id))
+    }
+
+    readonly property bool lyricsWidgetInLayout: {
+        const layouts = root.options?.bar?.layouts
+        if (!layouts) return false
+        return root.lyricsLayoutKeys.some(key =>
+            Array.from(layouts[key] ?? []).some(id => root.isLyricsWidgetId(id))
+        )
+    }
+
+    function syncLyricsWidgetEnable() {
+        root.options.bar.lyricsWidget.enable = root.lyricsWidgetInLayout
+    }
+
+    function setLyricsWidgetEnabled(enabled) {
+        const layouts = root.options.bar.layouts
+        if (enabled) {
+            if (!root.lyricsWidgetInLayout)
+                layouts.middleLayout = root.normalizeBarLayout(layouts.middleLayout).concat("lyricsWidget")
+        } else {
+            root.lyricsLayoutKeys.forEach(key => {
+                layouts[key] = root.normalizeBarLayout(layouts[key]).filter(id => !root.isLyricsWidgetId(id))
+            })
+        }
+        root.syncLyricsWidgetEnable()
+    }
+
     Timer {
         id: fileReloadTimer
         interval: root.readWriteDelay

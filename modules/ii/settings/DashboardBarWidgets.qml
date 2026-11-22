@@ -1,5 +1,6 @@
 import QtQuick
 import qs.services
+import qs.modules.common
 
 QtObject {
     readonly property var multipleAllowed: ["visualizer", "divisor"]
@@ -10,6 +11,7 @@ QtObject {
         { id: "weatherBar", name: Translation.tr("Weather"), icon: "flare" },
         { id: "liveWallpaper", name: Translation.tr("Live wallpaper"), icon: "play_pause" },
         { id: "media", name: Translation.tr("Media"), icon: "music_note" },
+        { id: "lyricsWidget", name: Translation.tr("Lyrics"), icon: "lyrics" },
         { id: "resources", name: Translation.tr("Resources"), icon: "empty_dashboard" },
         { id: "systemIcons", name: Translation.tr("System Icons"), icon: "info" },
         { id: "networkSpeed", name: Translation.tr("Network Speed"), icon: "network_check" },
@@ -32,6 +34,7 @@ QtObject {
     ]
 
     function byId(id) {
-        return all.find(w => w.id === id) ?? { id: id, name: id, icon: "widgets" };
+        const canonicalId = Config.isLyricsWidgetId(id) ? "lyricsWidget" : id;
+        return all.find(w => w.id === canonicalId) ?? { id: canonicalId, name: canonicalId, icon: "widgets" };
     }
 }

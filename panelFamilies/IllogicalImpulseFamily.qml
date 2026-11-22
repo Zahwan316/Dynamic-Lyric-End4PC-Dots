@@ -32,7 +32,7 @@ Scope {
     PanelLoader { extraCondition: !Config.options.bar.vertical; component: Bar {} }
     PanelLoader {
         extraCondition: !Config.options.bar.vertical
-            && (Config.options.bar.lyricsWidget?.enable ?? false)
+            && Config.lyricsWidgetInLayout
             && ["floating", "floating-island"].includes(Config.options.bar.lyricsWidget?.mode ?? "notch")
         component: LyricsIsland {}
     }

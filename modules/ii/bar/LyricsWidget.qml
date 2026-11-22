@@ -118,6 +118,14 @@ Rectangle {
     property bool isExpanded: false
     property real morphProgress: 0.0
     property int activeLyricIndex: -1
+
+    // Arah perpindahan lirik di compact pill: 1 = lirik baru naik dari bawah,
+    // -1 = lirik baru turun dari atas (dipakai saat mundur/seek).
+    property int lyricSlideDirection: 1
+    property int lastAnimatedLyricIndex: -1
+    readonly property real compactSlideDistance: 10
+    readonly property bool compactSlideEnabled: !root.isExpanded && root.morphProgress < 0.08
+
     property bool hasSyncedLrc: false
     property int lrcSourcePriority: 0
     property real systemVolume: 0.7
@@ -749,9 +757,9 @@ Rectangle {
             const nextStart = lyricModel.get(idx + 1).timeSec
             const gap = nextStart - startSec
             if (gap > 0.25) {
-                if (gap > estimatedVocalSec + 2.5)
-                    return Math.min(gap - 0.35, Math.max(estimatedVocalSec, Math.min(7.5, gap * 0.65)))
-                return Math.max(0.45, gap * 0.94)
+                // Sweep mengikuti jarak ke lirik berikutnya, bukan hanya panjang teks,
+                // sehingga baris pendek tidak selesai lebih awal dari vokal.
+                return Math.max(0.45, Math.min(gap - 0.12, Math.max(estimatedVocalSec, gap * 0.93)))
             }
         }
         const trackLen = (root.trackDurationSec > startSec) ? root.trackDurationSec : (startSec + 10.0)
@@ -794,7 +802,7 @@ Rectangle {
             : item.translatedText
 
         const durSec = (item.explicitEndSec > baseStart && (item.explicitEndSec - baseStart) <= 10.0)
-            ? Math.max(0.45, (item.explicitEndSec - baseStart) * 0.95)
+            ? Math.max(0.45, (item.explicitEndSec - baseStart))
             : (item.timeSec >= 0
                 ? computeLineDurationSec(idx, item.timeSec, rawText)
                 : estimateNaturalVocalDurationSec(rawText))
@@ -836,6 +844,13 @@ Rectangle {
     }
 
     function getCurrentLineElapsedSec() {
+        // Untuk lirik tersinkron, pakai posisi player terkalibrasi (bukan wall clock)
+        // agar koreksi drift/seek langsung tercermin di progres karaoke.
+        if (root.hasSyncedLrc && root.hasReliablePlayerClock && root.activeLineStartSec >= 0) {
+            const calPos = getCalibratedPositionSec()
+            if (calPos >= 0.0)
+                return Math.max(0.0, calPos - root.activeLineStartSec)
+        }
         const now = root.isPlaying ? Date.now() : (root.pauseStartedWallMs > 0 ? root.pauseStartedWallMs : Date.now())
         const rate = (activePlayer && activePlayer.rate > 0) ? activePlayer.rate : 1.0
         return Math.max(0.0, ((now - root.lineStartWallMs) / 1000.0) * rate)
@@ -878,7 +893,7 @@ Rectangle {
         if (root.hasReliablePlayerClock && root.hasSyncedLrc && lyricModel.count > 0) {
             if (calPos >= 0.0) {
                 let targetIdx = -1
-                const lookupPos = calPos + 0.04
+                const lookupPos = calPos
                 for (let i = 0; i < lyricModel.count; i++) {
                     if (lyricModel.get(i).timeSec <= lookupPos)
                         targetIdx = i
@@ -909,7 +924,7 @@ Rectangle {
         const elapsed = getCurrentLineElapsedSec()
         const nextProgress = evaluateKaraokeProgress(elapsed)
 
-        if (allowBackward)
+        if (allowBackward || root.hasReliablePlayerClock)
             root.karaokeProgress = nextProgress
         else
             root.karaokeProgress = Math.max(root.karaokeProgress, nextProgress)
@@ -1452,7 +1467,8 @@ Rectangle {
 
         const expanded = []
 
-        if (sortedEntries[0].timeSec >= 4.5 && !sortedEntries[0].isInstrumental) {
+        // Intro instrumental: beri entri kosong sejak 0 agar vokal tidak muncul duluan.
+        if (sortedEntries[0].timeSec >= 1.0 && !sortedEntries[0].isInstrumental) {
             expanded.push({
                 timeSec: 0.0,
                 endSec: sortedEntries[0].timeSec,
@@ -1468,6 +1484,10 @@ Rectangle {
         for (let k = 0; k < sortedEntries.length; k++) {
             const cur = sortedEntries[k]
             const nextStart = (k + 1 < sortedEntries.length) ? sortedEntries[k + 1].timeSec : -1
+
+            if (!cur.isInstrumental && cur.explicitEndSec > cur.timeSec && nextStart > cur.timeSec) {
+                cur.explicitEndSec = Math.min(cur.explicitEndSec, nextStart - 0.05)
+            }
 
             if (cur.isInstrumental) {
                 if (nextStart > 0 && (nextStart - cur.timeSec) < 2.5) {
@@ -1736,6 +1756,7 @@ Rectangle {
 
             let cleanText = bodyWithoutLineTags
             let wordTimingsJson = ""
+            let explicitLineEndRelSec = -1
             if (bodyWithoutLineTags.indexOf("<") !== -1) {
                 const rawWords = []
                 let assembled = ""
@@ -1771,6 +1792,9 @@ Rectangle {
                         })
                     }
                     wordTimingsJson = JSON.stringify(finalized)
+                    const lastWord = rawWords[rawWords.length - 1]
+                    const tailSec = Math.max(0.2, Math.min(1.2, (lastWord.charEnd - lastWord.charStart) * 0.16))
+                    explicitLineEndRelSec = Math.max(0.0, lastWord.startSec - baseLineT) + tailSec
                 }
             }
 
@@ -1780,7 +1804,7 @@ Rectangle {
                 parsed.push({
                     timeSec: timestamps[t],
                     endSec: -1,
-                    explicitEndSec: -1,
+                    explicitEndSec: (!isInst && explicitLineEndRelSec > 0) ? timestamps[t] + explicitLineEndRelSec : -1,
                     rawText: isInst ? "" : cleanText,
                     romanizedText: instantRom,
                     translatedText: "",
@@ -1862,7 +1886,7 @@ Rectangle {
         const calPos = getCalibratedPositionSec()
 
         if (root.hasReliablePlayerClock && calPos >= 0.0) {
-            const lookupPos = calPos + 0.04
+            const lookupPos = calPos
             let idx = 0
             for (let i = 0; i < lyricModel.count; i++) {
                 if (lyricModel.get(i).timeSec <= lookupPos)
@@ -1963,6 +1987,13 @@ Rectangle {
     }
 
     function showFallbackLine() {
+        // Awal lagu sering berisi intro instrumental. Jangan tampilkan teks
+        // berbentuk lirik sebelum ada timestamp vokal pertama.
+        const pos = getCalibratedPositionSec()
+        if (!root.hasSyncedLrc && pos < 1.25) {
+            transitionToText("", "", "", false, true)
+            return
+        }
         const fallback = trackTitle !== "" ? ("♪ " + trackTitle) : "Memuat lirik..."
         transitionToText(fallback, "", "", true, false)
     }
@@ -1975,6 +2006,13 @@ Rectangle {
             && isFallback === root.isFallbackLine
             && instFlag === root.isInstrumentalLine)
             return
+
+        // Tentukan arah geser sebelum state lirik ditimpa.
+        const prevIdx = root.lastAnimatedLyricIndex
+        const nextIdx = root.activeLyricIndex
+        if (nextIdx >= 0 && prevIdx >= 0 && nextIdx !== prevIdx)
+            root.lyricSlideDirection = nextIdx > prevIdx ? 1 : -1
+        root.lastAnimatedLyricIndex = nextIdx
 
         root.displayedRawText = rawText
         root.displayedRomanized = romText
@@ -1991,6 +2029,15 @@ Rectangle {
         root.useSlotA = !root.useSlotA
         const incoming = root.useSlotA ? slotA : slotB
         const outgoing = root.useSlotA ? slotB : slotA
+        const slideDist = root.compactSlideEnabled ? root.compactSlideDistance : 0
+        const dir = root.lyricSlideDirection
+
+        // Reset posisi tanpa animasi, lalu jalankan ease-in-out bersamaan
+        // dengan crossfade opacity. Hanya aktif saat compact pill terlihat.
+        incoming.slideReady = false
+        outgoing.slideReady = false
+        incoming.y = dir * slideDist
+        outgoing.y = 0
 
         outgoing.active = false
         incoming.rawText = rawText
@@ -1999,6 +2046,11 @@ Rectangle {
         incoming.isFallback = isFallback
         incoming.isInstrumental = instFlag
         incoming.active = true
+
+        incoming.slideReady = true
+        outgoing.slideReady = true
+        incoming.y = 0
+        outgoing.y = -dir * slideDist
 
         if (!isFallback && !instFlag)
             updateKaraokeFrame(true)
@@ -2137,7 +2189,11 @@ Rectangle {
 
             readonly property bool showSecondLine: !isInstrumental && root.showRomajiSubline && romanizedText !== "" && !isFallback
             readonly property bool showThirdLine: !isInstrumental && root.showTranslate && translatedText !== "" && !isFallback
-            readonly property int tierCount: isInstrumental ? 1 : (1 + (showSecondLine ? 1 : 0) + (showThirdLine ? 1 : 0))
+            // Baris asli tetap tampil bila semua baris lain mati/kosong agar pill tidak kosong.
+            readonly property bool showFirstLine: !isInstrumental && (root.showOriginalLanguage || (!showSecondLine && !showThirdLine))
+            readonly property int tierCount: isInstrumental ? 1 : ((showFirstLine ? 1 : 0) + (showSecondLine ? 1 : 0) + (showThirdLine ? 1 : 0))
+            readonly property bool primaryIsRomaji: !showFirstLine && showSecondLine
+            readonly property bool primaryIsTrans: !showFirstLine && !showSecondLine && showThirdLine
 
             // Warna Romaji diambil dari warna dominan cover album
             readonly property color romajiActiveCol: Qt.lighter(root.effectiveAccentColor, 1.42)
@@ -2146,7 +2202,7 @@ Rectangle {
             readonly property real maxContentW: isInstrumental
                 ? instrumentalRow.implicitWidth
                 : Math.max(
-                    origDimText.implicitWidth,
+                    showFirstLine ? origDimText.implicitWidth : 0,
                     showSecondLine ? romDimText.implicitWidth : 0,
                     showThirdLine ? subLineText.implicitWidth : 0
                 )
@@ -2157,6 +2213,10 @@ Rectangle {
 
             opacity: active ? (isFallback && root.isLoadingLyrics ? pulseOpacity : 1.0) : 0.0
             y: 0
+
+            // Dinyaktifkan sebentar saat slot disiapkan agar lompatan posisi
+            // awal tidak ikut dianimasikan.
+            property bool slideReady: false
 
             property real pulseOpacity: 1.0
 
@@ -2169,7 +2229,15 @@ Rectangle {
 
             Behavior on opacity {
                 NumberAnimation {
-                    duration: 220
+                    duration: 260
+                    easing.type: Easing.InOutCubic
+                }
+            }
+
+            Behavior on y {
+                enabled: lineItem.slideReady
+                NumberAnimation {
+                    duration: 260
                     easing.type: Easing.InOutCubic
                 }
             }
@@ -2291,7 +2359,7 @@ Rectangle {
                     visible: lineItem.showThirdLine
                     text: lineItem.translatedText
                     color: root.subTextColor
-                    font.pixelSize: 11
+                    font.pixelSize: lineItem.primaryIsTrans ? 14 : 11
                     elide: Text.ElideRight
                     width: Math.min(implicitWidth, root.maxCompactLyricWidth)
                 }
@@ -3117,7 +3185,7 @@ Rectangle {
                     }
 
                     // =============================================================
-                    // BARIS BAWAH: 2 TOMBOL PILL ("Translate" & "Romaji")
+                    // BARIS BAWAH: 3 TOMBOL PILL (Translate, Romaji, Original)
                     // =============================================================
                     Row {
                         id: bottomActionRow
@@ -3125,18 +3193,18 @@ Rectangle {
                         anchors.leftMargin: 22
                         anchors.bottom: parent.bottom
                         anchors.bottomMargin: 20
-                        spacing: 12
+                        spacing: 9
 
-                        // 1. Tombol Translate
                         Rectangle {
                             id: btnTranslate
-                            width: 142
+                            width: 132
                             height: 38
                             radius: 19
                             scale: transBtnMouse.pressed ? 0.95 : 1.0
                             color: root.showTranslate
                                 ? root.effectiveButtonFill
-                                : Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b, 0.16)
+                                : Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b,
+                                    transBtnMouse.containsMouse ? 0.30 : 0.16)
                             border.width: 2
                             border.color: root.showTranslate
                                 ? root.effectiveButtonBorder
@@ -3146,12 +3214,24 @@ Rectangle {
                             Behavior on color { ColorAnimation { duration: 180 } }
                             Behavior on border.color { ColorAnimation { duration: 180 } }
 
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 13
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 6
+                                height: 6
+                                radius: 3
+                                color: root.effectiveSliderColor
+                                visible: root.showTranslate
+                            }
+
                             Text {
                                 anchors.centerIn: parent
+                                anchors.horizontalCenterOffset: root.showTranslate ? 4 : 0
                                 text: "Translate"
-                                color: root.showTranslate ? "#ffffff" : Qt.rgba(1, 1, 1, 0.80)
-                                font.pixelSize: 13
-                                font.weight: Font.Bold
+                                color: root.showTranslate ? "#ffffff" : Qt.rgba(1, 1, 1, 0.82)
+                                font.pixelSize: 12
+                                font.weight: Font.DemiBold
                             }
 
                             MouseArea {
@@ -3167,16 +3247,16 @@ Rectangle {
                             }
                         }
 
-                        // 2. Tombol Romaji
                         Rectangle {
                             id: btnRomajiSub
-                            width: 142
+                            width: 132
                             height: 38
                             radius: 19
                             scale: romSubBtnMouse.pressed ? 0.95 : 1.0
                             color: root.showRomajiSubline
-                                ? Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b, 0.52)
-                                : Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b, 0.14)
+                                ? Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b, 0.72)
+                                : Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b,
+                                    romSubBtnMouse.containsMouse ? 0.30 : 0.14)
                             border.width: 2
                             border.color: root.showRomajiSubline
                                 ? root.effectiveButtonBorder
@@ -3186,12 +3266,24 @@ Rectangle {
                             Behavior on color { ColorAnimation { duration: 180 } }
                             Behavior on border.color { ColorAnimation { duration: 180 } }
 
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 13
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 6
+                                height: 6
+                                radius: 3
+                                color: root.effectiveSliderColor
+                                visible: root.showRomajiSubline
+                            }
+
                             Text {
                                 anchors.centerIn: parent
+                                anchors.horizontalCenterOffset: root.showRomajiSubline ? 4 : 0
                                 text: "Romaji"
-                                color: root.showRomajiSubline ? "#ffffff" : Qt.rgba(1, 1, 1, 0.80)
-                                font.pixelSize: 13
-                                font.weight: Font.Bold
+                                color: root.showRomajiSubline ? "#ffffff" : Qt.rgba(1, 1, 1, 0.82)
+                                font.pixelSize: 12
+                                font.weight: Font.DemiBold
                             }
 
                             MouseArea {
@@ -3204,6 +3296,54 @@ Rectangle {
                                     if (root.showRomajiSubline)
                                         root.ensureCurrentAndModelTranslated()
                                 }
+                            }
+                        }
+
+                        Rectangle {
+                            id: btnOriginalLang
+                            width: 132
+                            height: 38
+                            radius: 19
+                            scale: origBtnMouse.pressed ? 0.95 : 1.0
+                            color: root.showOriginalLanguage
+                                ? Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b, 0.72)
+                                : Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b,
+                                    origBtnMouse.containsMouse ? 0.30 : 0.14)
+                            border.width: 2
+                            border.color: root.showOriginalLanguage
+                                ? root.effectiveButtonBorder
+                                : Qt.rgba(root.effectiveButtonBorder.r, root.effectiveButtonBorder.g, root.effectiveButtonBorder.b, 0.50)
+
+                            Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutBack } }
+                            Behavior on color { ColorAnimation { duration: 180 } }
+                            Behavior on border.color { ColorAnimation { duration: 180 } }
+
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 13
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 6
+                                height: 6
+                                radius: 3
+                                color: root.effectiveSliderColor
+                                visible: root.showOriginalLanguage
+                            }
+
+                            Text {
+                                anchors.centerIn: parent
+                                anchors.horizontalCenterOffset: root.showOriginalLanguage ? 4 : 0
+                                text: "Original"
+                                color: root.showOriginalLanguage ? "#ffffff" : Qt.rgba(1, 1, 1, 0.82)
+                                font.pixelSize: 12
+                                font.weight: Font.DemiBold
+                            }
+
+                            MouseArea {
+                                id: origBtnMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.showOriginalLanguage = !root.showOriginalLanguage
                             }
                         }
                     }

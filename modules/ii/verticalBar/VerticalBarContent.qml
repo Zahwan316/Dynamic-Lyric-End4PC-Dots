@@ -36,8 +36,14 @@ Item {
     readonly property bool isPanel: Config.options.bar.cornerStyle === 5
 
     function filterLayout(layout) {
-        if (trayHasItems) return layout
-        return layout.filter(name => name !== "sysTray")
+        const lyricsFloating = ["floating", "floating-island"].includes(Config.options.bar.lyricsWidget?.mode ?? "notch")
+        return layout.filter(name => {
+            if (name === "sysTray")
+                return trayHasItems
+            if (Config.isLyricsWidgetId(name))
+                return !lyricsFloating
+            return true
+        })
     }
 
     readonly property var effectiveLeftLayout:   filterLayout(Config.options.bar.layouts.leftLayout)

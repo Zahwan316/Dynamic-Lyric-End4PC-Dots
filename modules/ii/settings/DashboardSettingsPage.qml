@@ -136,7 +136,9 @@ Item {
 
     readonly property var usedWidgets: {
         const layouts = Config.options.bar.layouts;
-        return Array.from(layouts.leftLayout).concat(Array.from(layouts.middleLayout), Array.from(layouts.rightLayout));
+        return Array.from(layouts.leftLayout)
+            .concat(Array.from(layouts.middleLayout), Array.from(layouts.rightLayout))
+            .map(id => Config.isLyricsWidgetId(id) ? "lyricsWidget" : id);
     }
 
     function isVisibleEntry(e) {

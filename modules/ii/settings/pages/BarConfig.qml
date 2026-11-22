@@ -46,9 +46,9 @@ ContentPage {
 
     function availableFor(section) {
         let used = [
-            ...Config.options.bar.layouts.leftLayout,
-            ...Config.options.bar.layouts.middleLayout,
-            ...Config.options.bar.layouts.rightLayout
+            ...Config.normalizeBarLayout(Config.options.bar.layouts.leftLayout),
+            ...Config.normalizeBarLayout(Config.options.bar.layouts.middleLayout),
+            ...Config.normalizeBarLayout(Config.options.bar.layouts.rightLayout)
         ]
         if (section === "middle" && Config.options.bar.layouts.middleLayout.length > 0) {
             return Config.options.bar.layouts.middleLayout.includes("dynamicIsland") ? [] : allWidgets.filter(w => {
@@ -68,7 +68,11 @@ ContentPage {
 
     readonly property var usedWidgets: {
         const layouts = Config.options.bar.layouts
-        const used = [...layouts.leftLayout, ...layouts.middleLayout, ...layouts.rightLayout]
+        const used = [
+            ...Config.normalizeBarLayout(layouts.leftLayout),
+            ...Config.normalizeBarLayout(layouts.middleLayout),
+            ...Config.normalizeBarLayout(layouts.rightLayout)
+        ]
         if (used.includes("dynamicIsland")) {
             used.push(Config.options.bar.dynamicIsland.leftWidget, Config.options.bar.dynamicIsland.rightWidget)
         }
@@ -92,14 +96,21 @@ ContentPage {
         aiUsage: Translation.tr("AI Usage")
     })
 
+    function updateLayout(section, list) {
+        Config.options.bar.layouts[section] = Config.normalizeBarLayout(list)
+        Config.syncLyricsWidgetEnable()
+    }
+
     function openWidgetSettings(id) {
-        const title = page.widgetSections[id]
+        const canonicalId = Config.normalizeBarWidgetId(id)
+        const title = page.widgetSections[canonicalId]
         if (title) page.goTo(title, title)
     }
 
     function getWidgetName(id) {
-        const w = allWidgets.find(w => w.id === id)
-        return w ? w.name : id
+        const canonicalId = Config.normalizeBarWidgetId(id)
+        const w = allWidgets.find(w => w.id === canonicalId)
+        return w ? w.name : canonicalId
     }
 
     ColumnLayout {
@@ -207,7 +218,7 @@ ContentPage {
                     layout: Config.options.bar.layouts.leftLayout
                     availableWidgets: page.availableFor("left")
                     getWidgetName: page.getWidgetName
-                    onUpdate: list => Config.options.bar.layouts.leftLayout = list
+                    onUpdate: list => page.updateLayout("leftLayout", list)
                     onWidgetContextRequested: id => page.openWidgetSettings(id)
                 }
 
@@ -216,7 +227,7 @@ ContentPage {
                     layout: Config.options.bar.layouts.middleLayout
                     availableWidgets: page.availableFor("middle")
                     getWidgetName: page.getWidgetName
-                    onUpdate: list => Config.options.bar.layouts.middleLayout = list
+                    onUpdate: list => page.updateLayout("middleLayout", list)
                     onWidgetContextRequested: id => page.openWidgetSettings(id)
                 }
 
@@ -225,7 +236,7 @@ ContentPage {
                     layout: Config.options.bar.layouts.rightLayout
                     availableWidgets: page.availableFor("right")
                     getWidgetName: page.getWidgetName
-                    onUpdate: list => Config.options.bar.layouts.rightLayout = list
+                    onUpdate: list => page.updateLayout("rightLayout", list)
                     onWidgetContextRequested: id => page.openWidgetSettings(id)
                 }
             }
@@ -431,21 +442,12 @@ ContentPage {
                 ConfigSwitch {
                     buttonIcon: "visibility"
                     text: Translation.tr("Show lyrics widget")
-                    checked: Config.options.bar.lyricsWidget?.enable ?? false
-                    onCheckedChanged: {
-                        Config.options.bar.lyricsWidget.enable = checked
-
-                        let layout = Config.options.bar.layouts.middleLayout.slice()
-                        if (checked && !layout.includes("lyricsWidget"))
-                            layout.push("lyricsWidget")
-                        if (!checked)
-                            layout = layout.filter(widget => widget !== "lyricsWidget")
-                        Config.options.bar.layouts.middleLayout = layout
-                    }
+                    checked: Config.lyricsWidgetInLayout
+                    onCheckedChanged: Config.setLyricsWidgetEnabled(checked)
                 }
 
                 ConfigSelectionArray {
-                    enabled: Config.options.bar.lyricsWidget?.enable ?? false
+                    enabled: Config.lyricsWidgetInLayout
                     opacity: enabled ? 1 : 0.4
                     text: Translation.tr("Placement")
                     icon: "dashboard_customize"
@@ -458,7 +460,7 @@ ContentPage {
                 }
 
                 ConfigSwitch {
-                    enabled: Config.options.bar.lyricsWidget?.enable ?? false
+                    enabled: Config.lyricsWidgetInLayout
                     opacity: enabled ? 1 : 0.4
                     buttonIcon: "palette"
                     text: Translation.tr("Use album cover color")
