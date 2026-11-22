@@ -462,12 +462,13 @@ Rectangle {
     Layout.preferredHeight: implicitHeight
     Layout.minimumWidth: implicitWidth
     Layout.minimumHeight: implicitHeight
-    // Siluet notch Mac: rata di tepi bar/layar, membulat di sisi dalam.
-    radius: 20
-    topLeftRadius: notchAtTop ? 0 : 20
-    topRightRadius: notchAtTop ? 0 : 20
-    bottomLeftRadius: notchAtTop ? 20 : 0
-    bottomRightRadius: notchAtTop ? 20 : 0
+    // Notch: rata di tepi bar/layar, membulat di sisi dalam.
+    // Floating island: kembali ke kapsul rounded penuh seperti desain awal.
+    radius: isFloatingIsland ? 24 : 20
+    topLeftRadius: isFloatingIsland ? radius : (notchAtTop ? 0 : radius)
+    topRightRadius: isFloatingIsland ? radius : (notchAtTop ? 0 : radius)
+    bottomLeftRadius: isFloatingIsland ? radius : (notchAtTop ? radius : 0)
+    bottomRightRadius: isFloatingIsland ? radius : (notchAtTop ? radius : 0)
     border.width: 0
     border.color: "transparent"
     clip: true
@@ -477,13 +478,17 @@ Rectangle {
         GradientStop {
             position: 0.62
             color: root.useAlbumColor
-                ? Qt.tint("#050505", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.18))
+                ? Qt.tint(isFloatingIsland ? "#070707" : "#050505",
+                          Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b,
+                                  isFloatingIsland ? 0.28 : 0.18))
                 : "#000000"
         }
         GradientStop {
             position: 1.0
             color: root.useAlbumColor
-                ? Qt.tint("#070707", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.42))
+                ? (isFloatingIsland
+                    ? root.effectiveAccentColor
+                    : Qt.tint("#070707", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.42)))
                 : "#000000"
         }
     }
@@ -2817,9 +2822,9 @@ Rectangle {
             ClippingRectangle {
                 Layout.preferredWidth: 28
                 Layout.preferredHeight: 28
-                radius: 8
+                radius: root.isFloatingIsland ? 6 : 8
                 color: "#141414"
-                border.width: 1
+                border.width: root.isFloatingIsland ? 0 : 1
                 border.color: Qt.rgba(1, 1, 1, 0.08)
                 scale: root.isPlaying ? 1.0 : 0.9
 
