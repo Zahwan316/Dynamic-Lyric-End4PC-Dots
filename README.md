@@ -78,7 +78,7 @@ All options live under `bar.lyricsWidget` in:
 | `useAlbumColor` | bool | `true` | Tint the compact background from the current album art. |
 | `enableKaraoke` | bool | `true` | Animate the current line word-by-word. When off, the whole active line is simply highlighted. |
 | `sourceOrder` | string[] | see below | Lyric provider order. Failed providers are skipped. |
-| `translation.targetLanguage` | string | `"id"` | Google/MyMemory/custom translation target. |
+| `translation.targetLanguage` | string | `"id"` | Translation target, selectable in Settings → Bar → Lyrics widget. |
 | `translation.customEndpoint` | string | `""` | Optional third translation provider. |
 | `credentials.*` | strings | `""` | Server URLs/tokens for the providers that need them. |
 
@@ -165,6 +165,8 @@ For each untranslated line the widget tries:
    and may return plain text or JSON containing `translatedText`, `translation`, or `text`.
 
 If every provider fails, the locally generated romanization is still committed and the queue continues. A stale track id cancels pending work, so results from a previous song are never applied.
+
+The target language is selectable in **Settings → Bar → Lyrics widget → Translation language**. When Google detects that the song is already in that language, translation is skipped and the **Translate** button turns itself off automatically; you can still switch it back on manually. Latin-script lines in the detected language are no longer sent to the translation providers, while non-Latin lines are still processed so romanization remains available.
 
 ---
 

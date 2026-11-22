@@ -26,6 +26,24 @@ QtObject {
         return { type: "text", get: () => String(HyprlandOptions.get(key, "")), set: v => HyprlandOptions.apply(key, v) };
     }
 
+    function lyricTranslationTargetOptions() {
+        return [
+            { displayName: Translation.tr("Indonesian"),           icon: "translate", value: "id" },
+            { displayName: Translation.tr("English"),              icon: "translate", value: "en" },
+            { displayName: Translation.tr("Japanese"),             icon: "translate", value: "ja" },
+            { displayName: Translation.tr("Korean"),               icon: "translate", value: "ko" },
+            { displayName: Translation.tr("Chinese (Simplified)"), icon: "translate", value: "zh-CN" },
+            { displayName: Translation.tr("French"),               icon: "translate", value: "fr" },
+            { displayName: Translation.tr("German"),               icon: "translate", value: "de" },
+            { displayName: Translation.tr("Spanish"),              icon: "translate", value: "es" },
+            { displayName: Translation.tr("Russian"),              icon: "translate", value: "ru" },
+            { displayName: Translation.tr("Arabic"),               icon: "translate", value: "ar" },
+            { displayName: Translation.tr("Hindi"),                icon: "translate", value: "hi" },
+            { displayName: Translation.tr("Portuguese"),           icon: "translate", value: "pt" },
+            { displayName: Translation.tr("Italian"),              icon: "translate", value: "it" }
+        ];
+    }
+
     function roleColor(name) {
         if (name === "black") return "black";
         return Appearance.colors["col" + name.charAt(0).toUpperCase() + name.slice(1)] ?? Appearance.getColorFromName(name);
@@ -128,6 +146,7 @@ QtObject {
         "bar:Placement": { type: "select", get: () => Config.options.bar.lyricsWidget?.mode ?? "notch", set: v => { Config.options.bar.lyricsWidget.mode = v; }, options: [{ displayName: Translation.tr("Notch"), icon: "crop_landscape", value: "notch" }, { displayName: Translation.tr("Floating island"), icon: "web_asset", value: "floating" }] },
         "bar:Use album cover color": { type: "switch", get: () => Config.options.bar.lyricsWidget?.useAlbumColor ?? true, set: v => { Config.options.bar.lyricsWidget.useAlbumColor = v; } },
         "bar:Enable karaoke": { type: "switch", get: () => Config.options.bar.lyricsWidget?.enableKaraoke ?? true, set: v => { Config.options.bar.lyricsWidget.enableKaraoke = v; } },
+        "bar:Translation language": { type: "select", get: () => Config.options.bar.lyricsWidget?.translation?.targetLanguage ?? "id", set: v => { Config.options.bar.lyricsWidget.translation.targetLanguage = v; }, options: lyricTranslationTargetOptions() },
         "hyprland:Active border color": { type: "select", get: () => Config.options.hyprland.general.borderColor.activeRole, set: v => { Config.options.hyprland.general.borderColor.activeRole = v; HyprlandConfig.applyBorderColors(); }, get options() { return ["primary", "secondary", "tertiary", "primaryContainer", "secondaryContainer", "tertiaryContainer", "layer0Border"].map(name => ({ value: name, color: roleColor(name) })); } },
         "hyprland:Active border opacity": { type: "spin", get: () => Math.round(Config.options.hyprland.general.borderColor.activeOpacity * 100), set: v => { Config.options.hyprland.general.borderColor.activeOpacity = v / 100.0; HyprlandConfig.applyBorderColors(); }, from: 0, to: 100, stepSize: 5 },
         "hyprland:Inactive border color": { type: "select", get: () => Config.options.hyprland.general.borderColor.inactiveRole, set: v => { Config.options.hyprland.general.borderColor.inactiveRole = v; HyprlandConfig.applyBorderColors(); }, get options() { return ["primary", "secondary", "tertiary", "primaryContainer", "secondaryContainer", "tertiaryContainer", "layer0Border"].map(name => ({ value: name, color: roleColor(name) })); } },
@@ -343,7 +362,8 @@ QtObject {
                 { type: "toggle", key: "bar:Show lyrics widget", title: Translation.tr("Show lyrics widget"), icon: "visibility", kw: "lyrics enable disable show hide" },
                 { type: "select", key: "bar:Placement", title: Translation.tr("Placement"), icon: "dashboard_customize", kw: "notch floating island position" },
                 { type: "toggle", key: "bar:Use album cover color", title: Translation.tr("Use album cover color"), icon: "palette", kw: "album art cover accent tint" },
-                { type: "toggle", key: "bar:Enable karaoke", title: Translation.tr("Enable karaoke"), icon: "graphic_eq", kw: "karaoke word highlight sweep disable" }
+                { type: "toggle", key: "bar:Enable karaoke", title: Translation.tr("Enable karaoke"), icon: "graphic_eq", kw: "karaoke word highlight sweep disable" },
+                { type: "select", key: "bar:Translation language", title: Translation.tr("Translation language"), icon: "translate", kw: "translate target language indonesian english japanese korean" }
             ]
         },
         {

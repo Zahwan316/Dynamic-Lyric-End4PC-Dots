@@ -476,6 +476,33 @@ ContentPage {
                     checked: Config.options.bar.lyricsWidget?.enableKaraoke ?? true
                     onCheckedChanged: { Config.options.bar.lyricsWidget.enableKaraoke = checked; }
                 }
+
+                ConfigComboBox {
+                    enabled: Config.lyricsWidgetInLayout
+                    opacity: enabled ? 1 : 0.4
+                    text: Translation.tr("Translation language")
+                    buttonIcon: "translate"
+                    fieldWidth: 200
+                    fixedWidth: true
+                    searchable: true
+                    currentValue: Config.options.bar.lyricsWidget?.translation?.targetLanguage ?? "id"
+                    onSelected: newValue => { Config.options.bar.lyricsWidget.translation.targetLanguage = newValue }
+                    model: [
+                        { displayName: Translation.tr("Indonesian"),          value: "id" },
+                        { displayName: Translation.tr("English"),             value: "en" },
+                        { displayName: Translation.tr("Japanese"),            value: "ja" },
+                        { displayName: Translation.tr("Korean"),              value: "ko" },
+                        { displayName: Translation.tr("Chinese (Simplified)"), value: "zh-CN" },
+                        { displayName: Translation.tr("French"),              value: "fr" },
+                        { displayName: Translation.tr("German"),              value: "de" },
+                        { displayName: Translation.tr("Spanish"),             value: "es" },
+                        { displayName: Translation.tr("Russian"),             value: "ru" },
+                        { displayName: Translation.tr("Arabic"),              value: "ar" },
+                        { displayName: Translation.tr("Hindi"),               value: "hi" },
+                        { displayName: Translation.tr("Portuguese"),          value: "pt" },
+                        { displayName: Translation.tr("Italian"),             value: "it" }
+                    ]
+                }
             }
         }
 

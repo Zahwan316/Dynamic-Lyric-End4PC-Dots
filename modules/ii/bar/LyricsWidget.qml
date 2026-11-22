@@ -17,6 +17,25 @@ Rectangle {
     property bool useAlbumColor: Config.options.bar.lyricsWidget?.useAlbumColor ?? true
     property bool enableKaraoke: Config.options.bar.lyricsWidget?.enableKaraoke ?? true
     onEnableKaraokeChanged: if (!enableKaraoke) karaokeProgress = 1.0
+
+    readonly property string translationTargetLanguage:
+        Config.options.bar.lyricsWidget?.translation?.targetLanguage || "id"
+    property string detectedTrackLanguage: ""
+
+    onTranslationTargetLanguageChanged: {
+        detectedTrackLanguage = ""
+        lineCache = ({})
+        if (!lyricModel)
+            return
+        const pending = []
+        for (let i = 0; i < lyricModel.count; i++) {
+            const raw = lyricModel.get(i).rawText
+            if (raw && pending.indexOf(raw) === -1)
+                pending.push(raw)
+        }
+        if (pending.length > 0)
+            enqueueTranslationLines(pending, false)
+    }
     readonly property bool isFloatingIsland: placementMode === "floating" || placementMode === "floating-island"
     // Kedua mode memakai siluet notch: hitam, leher rata di tepi layar/bar,
     // sudut bawah membulat. Floating island hanya digeser sedikit dari tepi atas.
@@ -1296,9 +1315,17 @@ Rectangle {
             root.isTranslatingNow = false
         }
 
+        const sameLanguage = root.detectedTrackLanguage !== ""
+            && langCodesMatch(root.detectedTrackLanguage, translateTargetLanguage())
+
         for (let i = 0; i < linesArray.length; i++) {
             const line = (linesArray[i] || "").trim()
             if (line === "" || isInstrumentalText(line))
+                continue
+
+            // Bahasa sudah sama dengan target: tidak perlu terjemahan.
+            // Baris non-Latin tetap lewat supaya romanisasi tetap tersedia.
+            if (sameLanguage && !containsNonLatin(line))
                 continue
 
             const cached = root.lineCache[line]
@@ -1415,6 +1442,11 @@ Rectangle {
                 done(false, bestRom, "")
                 return
             }
+            if (root.detectedTrackLanguage !== ""
+                && langCodesMatch(root.detectedTrackLanguage, translateTargetLanguage())) {
+                done(bestRom !== "", bestRom, "")
+                return
+            }
             if (idx >= providers.length || trans !== "") {
                 done(trans !== "", bestRom, trans)
                 return
@@ -1426,7 +1458,30 @@ Rectangle {
     }
 
     function translateTargetLanguage() {
-        return Config.options.bar.lyricsWidget?.translation?.targetLanguage || "id"
+        return root.translationTargetLanguage
+    }
+
+    function normalizeLangCode(code) {
+        let c = String(code || "").toLowerCase().trim().replace(/_/g, "-")
+        const aliases = {
+            "in": "id",
+            "iw": "he",
+            "ji": "yi",
+            "zh": "zh-cn",
+            "zh-hans": "zh-cn",
+            "zh-cn": "zh-cn"
+        }
+        return aliases[c] || c
+    }
+
+    function langCodesMatch(a, b) {
+        const left = normalizeLangCode(a)
+        const right = normalizeLangCode(b)
+        if (left === "" || right === "")
+            return false
+        if (left === right)
+            return true
+        return left.split("-")[0] === right.split("-")[0]
     }
 
     function fetchSingleLineGoogleTranslate(line, trackSnapshot, callback) {
@@ -1439,7 +1494,7 @@ Rectangle {
                 return
             }
             const data = res.data
-            const detectedLang = (data && data[2]) ? String(data[2]).toLowerCase() : ""
+            const detectedLang = (data && data[2]) ? String(data[2]) : ""
             let translated = ""
             let romanized = ""
 
@@ -1456,8 +1511,20 @@ Rectangle {
             const finalRom = (plainRom !== "" && plainRom.toLowerCase() !== line.toLowerCase()) ? plainRom : ""
 
             const cleanTrans = translated.trim()
-            const isSameTarget = detectedLang === translateTargetLanguage() && normalizeCompare(cleanTrans) === normalizeCompare(line)
-            callback(true, finalRom, (!isSameTarget && cleanTrans !== "") ? cleanTrans : "")
+            const sameLanguage = detectedLang !== "" && langCodesMatch(detectedLang, translateTargetLanguage())
+
+            if (sameLanguage) {
+                const firstDetection = root.detectedTrackLanguage === ""
+                root.detectedTrackLanguage = normalizeLangCode(detectedLang)
+                // Matikan tombol translate sekali saat bahasa lagu terdeteksi
+                // sama dengan target. User masih bisa menyalakannya manual.
+                if (firstDetection)
+                    root.showTranslate = false
+            }
+
+            // Jangan minta provider lain menerjemahkan baris yang sudah
+            // berada di bahasa target. Romanisasi tetap dikembalikan.
+            callback(true, finalRom, (!sameLanguage && cleanTrans !== "") ? cleanTrans : "")
         }, 7000)
     }
 
@@ -2397,6 +2464,7 @@ Rectangle {
                 root.translationQueue = []
                 root.queuedSet = ({})
                 root.isTranslatingNow = false
+                root.detectedTrackLanguage = ""
             }
         }
     }
@@ -2434,6 +2502,7 @@ Rectangle {
             lastLiveLineWallMs = 0.0
             lastFetchDurationSec = -1.0
             lastFetchTrackId = ""
+            detectedTrackLanguage = ""
             lyricModel.clear()
             syncClockAnchor(true)
             showFallbackLine()
@@ -2792,7 +2861,9 @@ Rectangle {
                         id: romDimText
                         text: lineItem.romanizedText
                         color: lineItem.romajiDimCol
-                        font.pixelSize: 12
+                        // Harus sama dengan teks aktif di overlay, kalau tidak
+                        // huruf yang belum dinyanyikan tampak lebih kecil.
+                        font.pixelSize: lineItem.primaryIsRomaji ? 14 : 12
                         font.weight: Font.Medium
                     }
 
