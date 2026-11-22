@@ -5,9 +5,15 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Widgets
 import Quickshell.Services.Mpris
+import qs.modules.common
 
 Rectangle {
     id: root
+
+    // --- Opsi dari Settings > Bar > Lyrics widget ---
+    property string placementMode: Config.options.bar.lyricsWidget?.mode ?? "notch"
+    property bool useAlbumColor: Config.options.bar.lyricsWidget?.useAlbumColor ?? true
+    readonly property bool isFloatingIsland: placementMode === "floating" || placementMode === "floating-island"
 
     // --- Konfigurasi Tema, Posisi & Ukuran ---
     property color bgColor: "#000000"
@@ -18,7 +24,7 @@ Rectangle {
     property color lyricDimColor: Qt.rgba(1.0, 1.0, 1.0, 0.36)
     property color subTextColor: Qt.rgba(1.0, 1.0, 1.0, 0.72)
     property real maxCompactLyricWidth: 420
-    property int yOffset: 6
+    property int yOffset: isFloatingIsland ? 8 : 6
 
     readonly property real expandedWidth: 492
     readonly property real expandedHeight: 404
@@ -37,9 +43,26 @@ Rectangle {
     Behavior on albumButtonBorder { ColorAnimation { duration: 420 } }
     Behavior on albumSliderColor { ColorAnimation { duration: 420 } }
 
-    // --- Mode Tampilan Lirik (2 Tombol Hover: Translate & Romaji) ---
+    // Warna pakai hasil ekstraksi cover hanya saat toggle album color aktif.
+    // Saat nonaktif, aksen tetap netral abu-abu agar kontras teks terjaga.
+    readonly property color effectiveAccentColor: root.useAlbumColor ? albumAccentColor : "#4a4a4a"
+    readonly property color effectiveGlowColor: root.useAlbumColor ? albumGlowColor : "#333333"
+    readonly property color effectiveButtonFill: root.useAlbumColor ? albumButtonFill : "#3d3d3d"
+    readonly property color effectiveButtonBorder: root.useAlbumColor ? albumButtonBorder : "#5c5c5c"
+    readonly property color effectiveSliderColor: root.useAlbumColor ? albumSliderColor : "#b8b8b8"
+
+    // Gradasi latar: hitam di atas, tint warna cover hanya di bagian bawah.
+    readonly property color gradientMidColor: root.useAlbumColor
+        ? Qt.tint("#0a0a0a", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.22))
+        : "#000000"
+    readonly property color gradientBottomColor: root.useAlbumColor
+        ? Qt.tint("#101010", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.82))
+        : "#000000"
+
+    // --- Mode Tampilan Lirik (3 Tombol: Translate, Romaji, Original) ---
     property bool showTranslate: true
     property bool showRomajiSubline: true
+    property bool showOriginalLanguage: true
 
     // --- State Internal Lirik, Romanisasi & Terjemahan ---
     property string currentRawLyric: ""
@@ -280,11 +303,11 @@ Rectangle {
             }
 
             if (totalVibrantWeight <= 0.05) {
-                root.albumAccentColor = "#475161"
-                root.albumGlowColor = "#7d8fa8"
-                root.albumButtonFill = "#55647a"
-                root.albumButtonBorder = "#7486a1"
-                root.albumSliderColor = "#b4c5e0"
+                albumAccentColor = "#475161"
+                albumGlowColor = "#7d8fa8"
+                albumButtonFill = "#55647a"
+                albumButtonBorder = "#7486a1"
+                albumSliderColor = "#b4c5e0"
                 return
             }
 
@@ -297,11 +320,11 @@ Rectangle {
             const domH = bestBin.hSum / bestBin.weight
             const domS = Math.max(0.42, Math.min(0.85, bestBin.sSum / bestBin.weight))
 
-            root.albumAccentColor = root.hslToHex(domH, Math.min(0.86, domS + 0.06), 0.50)
-            root.albumGlowColor = root.hslToHex(domH, Math.max(0.45, domS * 0.85), 0.70)
-            root.albumButtonFill = root.hslToHex(domH, Math.min(0.78, domS), 0.46)
-            root.albumButtonBorder = root.hslToHex(domH, Math.min(0.82, domS + 0.04), 0.56)
-            root.albumSliderColor = root.hslToHex(domH, Math.max(0.48, domS * 0.9), 0.76)
+            albumAccentColor = root.hslToHex(domH, Math.min(0.86, domS + 0.06), 0.50)
+            albumGlowColor = root.hslToHex(domH, Math.max(0.45, domS * 0.85), 0.70)
+            albumButtonFill = root.hslToHex(domH, Math.min(0.78, domS), 0.46)
+            albumButtonBorder = root.hslToHex(domH, Math.min(0.82, domS + 0.04), 0.56)
+            albumSliderColor = root.hslToHex(domH, Math.max(0.48, domS * 0.9), 0.76)
         }
     }
 
@@ -429,9 +452,11 @@ Rectangle {
         GradientStop { position: 0.0; color: "#000000" }
         GradientStop {
             position: 0.55
-            color: Qt.tint("#070707", Qt.rgba(root.albumAccentColor.r, root.albumAccentColor.g, root.albumAccentColor.b, 0.28))
+            color: root.useAlbumColor
+                ? Qt.tint("#070707", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.28))
+                : "#000000"
         }
-        GradientStop { position: 1.0; color: root.albumAccentColor }
+        GradientStop { position: 1.0; color: root.useAlbumColor ? root.effectiveAccentColor : "#000000" }
     }
 
     Behavior on implicitWidth {
@@ -2115,7 +2140,7 @@ Rectangle {
             readonly property int tierCount: isInstrumental ? 1 : (1 + (showSecondLine ? 1 : 0) + (showThirdLine ? 1 : 0))
 
             // Warna Romaji diambil dari warna dominan cover album
-            readonly property color romajiActiveCol: Qt.lighter(root.albumAccentColor, 1.42)
+            readonly property color romajiActiveCol: Qt.lighter(root.effectiveAccentColor, 1.42)
             readonly property color romajiDimCol: Qt.rgba(romajiActiveCol.r, romajiActiveCol.g, romajiActiveCol.b, 0.38)
 
             readonly property real maxContentW: isInstrumental
@@ -2162,7 +2187,7 @@ Rectangle {
 
                 Text {
                     text: "󰎇"
-                    color: root.albumSliderColor
+                    color: root.effectiveSliderColor
                     font.pixelSize: 15
                     anchors.verticalCenter: parent.verticalCenter
                 }
@@ -2202,6 +2227,7 @@ Rectangle {
                 spacing: 0
 
                 Item {
+                    visible: lineItem.showFirstLine
                     width: origDimText.implicitWidth
                     height: origDimText.implicitHeight
                     x: -lineItem.origOverflow * lineItem.panRatio
@@ -2254,7 +2280,7 @@ Rectangle {
                         Text {
                             text: lineItem.romanizedText
                             color: lineItem.romajiActiveCol
-                            font.pixelSize: 12
+                            font.pixelSize: lineItem.primaryIsRomaji ? 14 : 12
                             font.weight: Font.Medium
                         }
                     }
@@ -2317,7 +2343,7 @@ Rectangle {
                     anchors.centerIn: parent
                     visible: compactArt.opacity < 0.1
                     text: "󰎆"
-                    color: root.albumSliderColor
+                    color: root.effectiveSliderColor
                     font.pixelSize: 12
                 }
             }
@@ -2372,7 +2398,7 @@ Rectangle {
                         width: 2.5
                         height: root.isPlaying ? modelData.maxH : modelData.minH
                         radius: 1.25
-                        color: root.albumSliderColor
+                        color: root.effectiveSliderColor
                         anchors.verticalCenter: parent.verticalCenter
 
                         SequentialAnimation on height {
@@ -2442,15 +2468,22 @@ Rectangle {
                     onHoveredChanged: root.updateHoverState()
                 }
 
-                // Gradasi: paling atas #000000 dan bawah mengikuti warna cover album
+                // Gradasi: hitam di atas, bayangan warna cover di bawah (lebih lembut & tidak bleach).
                 gradient: Gradient {
                     GradientStop { position: 0.00; color: "#000000" }
-                    GradientStop { position: 0.44; color: "#090909" }
-                    GradientStop {
-                        position: 0.74
-                        color: Qt.tint("#121010", Qt.rgba(root.albumGlowColor.r, root.albumGlowColor.g, root.albumGlowColor.b, 0.44))
-                    }
-                    GradientStop { position: 1.00; color: root.albumGlowColor }
+                    GradientStop { position: 0.42; color: "#000000" }
+                    GradientStop { position: 0.74; color: root.gradientMidColor }
+                    GradientStop { position: 1.00; color: root.gradientBottomColor }
+                }
+
+                // Garis tipis atas memberi kesan kartu melayang tanpa mengganggu gradasi.
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 1
+                    height: 1
+                    color: Qt.rgba(1, 1, 1, 0.07)
                 }
 
                 opacity: Math.max(0.0, Math.min(1.0, root.morphProgress * 6.0))
@@ -2506,7 +2539,7 @@ Rectangle {
                                 anchors.centerIn: parent
                                 visible: expandedArt.opacity < 0.1
                                 text: "󰎆"
-                                color: root.albumAccentColor
+                                color: root.effectiveAccentColor
                                 font.pixelSize: 38
                             }
                         }
@@ -2571,7 +2604,7 @@ Rectangle {
                                     radius: 6
                                     color: Qt.rgba(0.06, 0.06, 0.06, 0.92)
                                     border.width: 1
-                                    border.color: root.albumSliderColor
+                                    border.color: root.effectiveSliderColor
 
                                     Behavior on opacity {
                                         NumberAnimation { duration: 150; easing.type: Easing.InOutCubic }
@@ -2599,7 +2632,7 @@ Rectangle {
                                     width: (parent.width * customSliderContainer.progressRatio) + 4
                                     height: customSliderContainer.hoveredOrPressed ? 12 : 8
                                     radius: height / 2
-                                    color: Qt.rgba(root.albumSliderColor.r, root.albumSliderColor.g, root.albumSliderColor.b, customSliderContainer.hoveredOrPressed ? 0.32 : 0.16)
+                                    color: Qt.rgba(root.effectiveSliderColor.r, root.effectiveSliderColor.g, root.effectiveSliderColor.b, customSliderContainer.hoveredOrPressed ? 0.32 : 0.16)
 
                                     Behavior on height {
                                         NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
@@ -2627,8 +2660,8 @@ Rectangle {
                                         radius: parent.radius
                                         gradient: Gradient {
                                             orientation: Gradient.Horizontal
-                                            GradientStop { position: 0.0; color: root.albumAccentColor }
-                                            GradientStop { position: 1.0; color: root.albumSliderColor }
+                                            GradientStop { position: 0.0; color: root.effectiveAccentColor }
+                                            GradientStop { position: 1.0; color: root.effectiveSliderColor }
                                         }
                                     }
                                 }
@@ -2652,7 +2685,7 @@ Rectangle {
                                         width: parent.width * 0.46
                                         height: width
                                         radius: width / 2
-                                        color: root.albumAccentColor
+                                        color: root.effectiveAccentColor
                                     }
                                 }
 
@@ -2845,7 +2878,7 @@ Rectangle {
 
                             Text {
                                 text: root.currentVolume <= 0.01 ? "󰖁" : "󰕾"
-                                color: root.albumSliderColor
+                                color: root.effectiveSliderColor
                                 font.pixelSize: 12
                             }
 
@@ -2865,7 +2898,7 @@ Rectangle {
                                         width: parent.width * root.currentVolume
                                         height: parent.height
                                         radius: 2
-                                        color: root.albumSliderColor
+                                        color: root.effectiveSliderColor
                                     }
                                 }
 
@@ -2928,7 +2961,7 @@ Rectangle {
 
                             Text {
                                 text: root.isInstrumentalLine ? "󰎇   • • •   󰎇" : (root.displayedRawText !== "" ? root.displayedRawText : "Menunggu lirik...")
-                                color: root.isInstrumentalLine ? root.albumSliderColor : Qt.rgba(1, 1, 1, 0.72)
+                                color: root.isInstrumentalLine ? root.effectiveSliderColor : Qt.rgba(1, 1, 1, 0.72)
                                 font.pixelSize: root.isInstrumentalLine ? 18 : 15
                                 font.weight: Font.Bold
                                 wrapMode: Text.WordWrap
@@ -2964,6 +2997,7 @@ Rectangle {
                                 readonly property bool isCurrent: index === root.activeLyricIndex
                                 readonly property bool showSecondRom: !isInstrumental && root.showRomajiSubline && romanizedText !== ""
                                 readonly property bool showThirdTrans: !isInstrumental && root.showTranslate && translatedText !== ""
+                                readonly property bool showFirstRaw: !isInstrumental && (root.showOriginalLanguage || (!showSecondRom && !showThirdTrans))
 
                                 width: fullLyricsView.width
                                 height: (isInstrumental ? instrumentalDelegateRow.implicitHeight : lyricRowColumn.implicitHeight) + 2
@@ -2997,7 +3031,7 @@ Rectangle {
 
                                     Text {
                                         text: "󰎇"
-                                        color: rowDelegate.isCurrent ? root.albumSliderColor : Qt.rgba(1, 1, 1, 0.55)
+                                        color: rowDelegate.isCurrent ? root.effectiveSliderColor : Qt.rgba(1, 1, 1, 0.55)
                                         font.pixelSize: 16
                                         anchors.verticalCenter: parent.verticalCenter
                                     }
@@ -3021,6 +3055,7 @@ Rectangle {
 
                                     // 1. Bahasa Asli
                                     Text {
+                                        visible: rowDelegate.showFirstRaw
                                         width: parent.width
                                         textFormat: Text.RichText
                                         wrapMode: Text.WordWrap
@@ -3041,11 +3076,13 @@ Rectangle {
                                         wrapMode: Text.WordWrap
                                         horizontalAlignment: Text.AlignLeft
                                         lineHeight: 1.15
-                                        font.pixelSize: rowDelegate.isCurrent ? 13 : 12
+                                        font.pixelSize: rowDelegate.isCurrent
+                                            ? (rowDelegate.showFirstRaw ? 13 : 17)
+                                            : (rowDelegate.showFirstRaw ? 12 : 15)
                                         font.weight: Font.DemiBold
                                         text: {
-                                            const activeHex = root.albumSliderColor.toString()
-                                            const dimHex = Qt.darker(root.albumAccentColor, 2.0).toString()
+                                            const activeHex = root.effectiveSliderColor.toString()
+                                            const dimHex = Qt.darker(root.effectiveAccentColor, 2.0).toString()
                                             return rowDelegate.isCurrent
                                                 ? root.buildRichKaraokeText(rowDelegate.romanizedText, root.karaokeProgress, activeHex, dimHex)
                                                 : "<font color=\"" + activeHex + "\">" + root.escapeHtml(rowDelegate.romanizedText) + "</font>"
@@ -3061,7 +3098,7 @@ Rectangle {
                                         horizontalAlignment: Text.AlignLeft
                                         lineHeight: 1.2
                                         color: rowDelegate.isCurrent ? Qt.rgba(1, 1, 1, 0.85) : Qt.rgba(1, 1, 1, 0.62)
-                                        font.pixelSize: 12
+                                        font.pixelSize: rowDelegate.showFirstRaw ? 12 : (rowDelegate.isCurrent ? 15 : 14)
                                     }
                                 }
 
@@ -3098,12 +3135,12 @@ Rectangle {
                             radius: 19
                             scale: transBtnMouse.pressed ? 0.95 : 1.0
                             color: root.showTranslate
-                                ? root.albumButtonFill
-                                : Qt.rgba(root.albumButtonFill.r, root.albumButtonFill.g, root.albumButtonFill.b, 0.16)
+                                ? root.effectiveButtonFill
+                                : Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b, 0.16)
                             border.width: 2
                             border.color: root.showTranslate
-                                ? root.albumButtonBorder
-                                : Qt.rgba(root.albumButtonBorder.r, root.albumButtonBorder.g, root.albumButtonBorder.b, 0.55)
+                                ? root.effectiveButtonBorder
+                                : Qt.rgba(root.effectiveButtonBorder.r, root.effectiveButtonBorder.g, root.effectiveButtonBorder.b, 0.55)
 
                             Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutBack } }
                             Behavior on color { ColorAnimation { duration: 180 } }
@@ -3138,12 +3175,12 @@ Rectangle {
                             radius: 19
                             scale: romSubBtnMouse.pressed ? 0.95 : 1.0
                             color: root.showRomajiSubline
-                                ? Qt.rgba(root.albumButtonFill.r, root.albumButtonFill.g, root.albumButtonFill.b, 0.52)
-                                : Qt.rgba(root.albumButtonFill.r, root.albumButtonFill.g, root.albumButtonFill.b, 0.14)
+                                ? Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b, 0.52)
+                                : Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b, 0.14)
                             border.width: 2
                             border.color: root.showRomajiSubline
-                                ? root.albumButtonBorder
-                                : Qt.rgba(root.albumButtonBorder.r, root.albumButtonBorder.g, root.albumButtonBorder.b, 0.50)
+                                ? root.effectiveButtonBorder
+                                : Qt.rgba(root.effectiveButtonBorder.r, root.effectiveButtonBorder.g, root.effectiveButtonBorder.b, 0.50)
 
                             Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutBack } }
                             Behavior on color { ColorAnimation { duration: 180 } }

@@ -30,6 +30,12 @@ import qs.modules.ii.frame
 
 Scope {
     PanelLoader { extraCondition: !Config.options.bar.vertical; component: Bar {} }
+    PanelLoader {
+        extraCondition: !Config.options.bar.vertical
+            && (Config.options.bar.lyricsWidget?.enable ?? false)
+            && ["floating", "floating-island"].includes(Config.options.bar.lyricsWidget?.mode ?? "notch")
+        component: LyricsIsland {}
+    }
     PanelLoader { component: Background {} }
     PanelLoader { extraCondition: Config.options.dock.enable; component: Dock {} }
     PanelLoader { component: EqualizerPopup {} }

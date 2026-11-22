@@ -1266,5 +1266,13 @@
   "Choose how the battery looks in the bar": "Choose how the battery looks in the bar",
   "Magnification": "Magnification",
   "Magnification amount": "Magnification amount",
-  "Magnification amount (%)": "Magnification amount (%)"
+  "Magnification amount (%)": "Magnification amount (%)",
+  "Lyrics widget": "Lyrics widget",
+  "Lyrics": "Lyrics",
+  "Show lyrics widget": "Show lyrics widget",
+  "Placement": "Placement",
+  "Notch": "Notch",
+  "Floating island": "Floating island",
+  "Use album cover color": "Use album cover color",
+  "Notch shows lyrics inside the bar. Floating island shows a separate panel above/below the bar.": "Notch shows lyrics inside the bar. Floating island shows a separate panel above/below the bar."
 }

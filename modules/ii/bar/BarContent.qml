@@ -37,8 +37,16 @@ Item {
     readonly property bool trayHasItems: SystemTray.items.values.length > 0
 
     function filterLayout(layout) {
-        if (trayHasItems) return layout
-        return layout.filter(name => name !== "sysTray")
+        const lyricsEnabled = Config.options.bar.lyricsWidget?.enable ?? false
+        const lyricsFloating = ["floating", "floating-island"].includes(Config.options.bar.lyricsWidget?.mode ?? "notch")
+
+        return layout.filter(name => {
+            if (name === "sysTray")
+                return trayHasItems
+            if (name === "lyricsWidget")
+                return lyricsEnabled && !lyricsFloating
+            return true
+        })
     }
 
     readonly property var effectiveLeftLayout:   filterLayout(Config.options.bar.layouts.leftLayout)
@@ -492,10 +500,6 @@ Item {
                     model: root.effectiveMiddleLayout
                     delegate: middleBarGroupDelegate
                 }
-
-                //LyricsWidget {
-                //    Layout.fillHeight: true
-                //}
 
                 Component {
                     id: middleBarGroupDelegate

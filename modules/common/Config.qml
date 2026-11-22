@@ -637,6 +637,12 @@ Singleton {
                     property int minWidth: 100
                     property bool showLyrics: false
                 }
+
+                property JsonObject lyricsWidget: JsonObject {
+                    property bool enable: false
+                    property string mode: "notch" // "notch" | "floating"
+                    property bool useAlbumColor: true
+                }
             }
 
             property JsonObject battery: JsonObject {

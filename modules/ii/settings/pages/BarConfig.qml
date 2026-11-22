@@ -22,6 +22,7 @@ ContentPage {
         { id: "weatherBar",        name: Translation.tr("Weather"),              icon: "flare" },
         { id: "liveWallpaper",     name: Translation.tr("Live wallpaper"),        icon: "play_pause" },
         { id: "media",             name: Translation.tr("Media"),                icon: "music_note" },
+        { id: "lyricsWidget",      name: Translation.tr("Lyrics"),               icon: "lyrics" },
         { id: "resources",         name: Translation.tr("Resources"),            icon: "empty_dashboard" },
         { id: "systemIcons",       name: Translation.tr("System Icons"),         icon: "info" },
         { id: "networkSpeed",      name: Translation.tr("Network Speed"),        icon: "network_check" },
@@ -87,6 +88,7 @@ ContentPage {
         workspaces: Translation.tr("Workspaces"),
         resources: Translation.tr("Resources"),
         media: Translation.tr("Media"),
+        lyricsWidget: Translation.tr("Lyrics widget"),
         aiUsage: Translation.tr("AI Usage")
     })
 
@@ -414,6 +416,54 @@ ContentPage {
                         checked: Config.options.bar.dynamicIsland.showMediaControls
                         onCheckedChanged: { Config.options.bar.dynamicIsland.showMediaControls = checked; }
                     }
+                }
+            }
+        }
+
+        ContentSection {
+            icon: "lyrics"
+            shape: MaterialShape.Shape.Cookie4Sided
+            title: Translation.tr("Lyrics widget")
+            hint: Translation.tr("Notch shows lyrics inside the bar. Floating island shows a separate panel above/below the bar.")
+            hintIcon: "info"
+
+            GroupedList {
+                ConfigSwitch {
+                    buttonIcon: "visibility"
+                    text: Translation.tr("Show lyrics widget")
+                    checked: Config.options.bar.lyricsWidget?.enable ?? false
+                    onCheckedChanged: {
+                        Config.options.bar.lyricsWidget.enable = checked
+
+                        let layout = Config.options.bar.layouts.middleLayout.slice()
+                        if (checked && !layout.includes("lyricsWidget"))
+                            layout.push("lyricsWidget")
+                        if (!checked)
+                            layout = layout.filter(widget => widget !== "lyricsWidget")
+                        Config.options.bar.layouts.middleLayout = layout
+                    }
+                }
+
+                ConfigSelectionArray {
+                    enabled: Config.options.bar.lyricsWidget?.enable ?? false
+                    opacity: enabled ? 1 : 0.4
+                    text: Translation.tr("Placement")
+                    icon: "dashboard_customize"
+                    currentValue: Config.options.bar.lyricsWidget?.mode ?? "notch"
+                    onSelected: newValue => { Config.options.bar.lyricsWidget.mode = newValue }
+                    options: [
+                        { displayName: Translation.tr("Notch"),          icon: "crop_landscape", value: "notch" },
+                        { displayName: Translation.tr("Floating island"), icon: "web_asset",     value: "floating" }
+                    ]
+                }
+
+                ConfigSwitch {
+                    enabled: Config.options.bar.lyricsWidget?.enable ?? false
+                    opacity: enabled ? 1 : 0.4
+                    buttonIcon: "palette"
+                    text: Translation.tr("Use album cover color")
+                    checked: Config.options.bar.lyricsWidget?.useAlbumColor ?? true
+                    onCheckedChanged: { Config.options.bar.lyricsWidget.useAlbumColor = checked; }
                 }
             }
         }

@@ -488,5 +488,13 @@
   "Colors": "Warna",
   "Monitors": "Monitor",
   "Fuzzy": "Fuzzy",
-  "Discord": "Discord"
+  "Discord": "Discord",
+  "Lyrics widget": "Widget lirik",
+  "Lyrics": "Lirik",
+  "Show lyrics widget": "Tampilkan widget lirik",
+  "Placement": "Penempatan",
+  "Notch": "Notch",
+  "Floating island": "Pulau melayang",
+  "Use album cover color": "Gunakan warna cover album",
+  "Notch shows lyrics inside the bar. Floating island shows a separate panel above/below the bar.": "Notch menampilkan lirik di dalam bar. Floating island menampilkan panel terpisah di atas/bawah bar."
 }
