@@ -2827,8 +2827,26 @@ Rectangle {
             yScale: root.notchAtTop ? 1 : -1
         }
 
+        // Opsional: gradien diambil dari warna cover album.
+        // Koordinat gradient mengikuti tinggi shape lokal (sebelum mirror).
+        LinearGradient {
+            id: notchAlbumGradient
+            y1: 0
+            y2: root.height
+            GradientStop { position: 0.0; color: "#000000" }
+            GradientStop {
+                position: 0.55
+                color: Qt.tint("#050505", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.28))
+            }
+            GradientStop {
+                position: 1.0
+                color: Qt.tint("#080808", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.62))
+            }
+        }
+
         ShapePath {
             fillColor: "#000000"
+            fillGradient: root.useAlbumColor ? notchAlbumGradient : null
             strokeWidth: 0
             startX: 0
             startY: 0

@@ -1,135 +1,206 @@
+# LyricsWidget — Documentation
 
+A synchronized lyrics widget for the Quickshell bar, with a compact notch-style pill, an expanded karaoke view, and a floating-island placement mode.
 
-
-
-<div align="center">
-
-# 💠 end4-pC
-
-**A personal fork of [illogical-impulse](https://github.com/end-4/dots-hyprland) by [@end-4](https://github.com/end-4)**  
-Customized and maintained by **pctrade**
-
-[English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
-
-</div>
+![Lyrics screenshot](screenshots/1.png)
 
 ---
 
-## 🎬 Showcase
+## Features
 
-<p align="center">
-  <a href="https://www.youtube.com/watch?v=o0Vsh7eVchs">
-    <img src="https://img.youtube.com/vi/o0Vsh7eVchs/maxresdefault.jpg" alt="Material 3 Expressive x Linux" width="85%" style="border-radius: 12px; box-shadow: 0px 10px 30px rgba(0,0,0,0.5);"/>
-  </a>
-</p>
-
-</div>
-
----
-
-## 📸 Screenshots
-<div align="center">
-
-| 🎵 Lyrics | 🖼️ Online Wallpapers |
-|:---:|:---:|
-| ![Screenshot 1](screenshots/1.png) | ![Screenshot 2](screenshots/2.png) |
-| 🪟 Desktop Widgets | 🔧 Hyprland Configs |
-| ![Screenshot 5](screenshots/5.png) | ![Screenshot 6](screenshots/6.png) |
-| ⚙️ Configurable Bar | ✨ And More |
-| ![Screenshot 3](screenshots/3.png) | ![Screenshot 4](screenshots/4.png) |
-
-</div>
+- **Real-time sync** with MPRIS players (position/duration polled from `playerctl`).
+- **Word-level karaoke** when the source provides enhanced LRC/YRC timings; line-level LRC otherwise.
+- **Compact pill** with:
+  - album art, current lyric, romanized line, translated line, and equalizer bars;
+  - tiered sizing based on how many lines are shown;
+  - smooth 260 ms `Easing.InOutCubic` slide/crossfade when the lyric changes (compact mode only).
+- **Expanded view** with a stable, non-shaking list:
+  - popup anchor and morph size are frozen when expansion starts;
+  - list scrolls only when the active line leaves the comfortable reading area;
+  - fixed row font sizes and opacity-only emphasis — no blur/scale popping.
+- **Multiple lyric sources with automatic fallback**.
+- **Translation fallback chain** plus local romanization when all network providers fail.
+- **Two placements**:
+  - `notch` — Mac-style notch with concave shoulders, attached to the bar/top edge;
+  - `floating` / `floating-island` — fully rounded pill, placed 8 px from the screen edge.
+- Usable from **left, middle, or right** bar layouts in both classic and dashboard settings.
 
 ---
 
-## 🎨 Community Presets
+## Placement modes
 
-Share your whole desktop with one button, or try someone else's in a click.
+### `notch`
 
-**[end4-pCpresets](https://github.com/pctrade/end4-pCpresets)** is the community gallery for this shell. Open **Dashboard → Presets**, pick a preset and press **Download** to try it or **Install** to keep it. Made your own? Press **Upload**, choose a screenshot and it is sent for you with one click. The first time, a terminal opens to install the [GitHub CLI](https://cli.github.com) (`gh`) and sign you in, which takes a minute. If you skip that, the shell opens a GitHub page where you drag the folder in instead. Changed your mind? **Remove from gallery** takes your own preset back out.
+The compact pill is drawn as a custom shape:
 
-- 🔒 **Private by design:** nothing is collected from you. The shell only reads public files from GitHub.
-- 🧹 **Clean exports:** personal paths, keys and commands are removed before anything is shared.
-- ✅ **Every preset is checked** automatically. First-time authors are reviewed by hand, and trusted authors are merged automatically once the check passes.
-- 👤 **Yours stays yours:** only the person who shared a preset can change or remove it.
+- the top edge spans the full widget width and blends into the bar;
+- the top-left/top-right corners curve inward as concave “shoulders”;
+- the body is narrower, with rounded bottom corners;
+- when `useAlbumColor` is enabled, a dark gradient tinted from the album accent color fills the shape;
+- on a bottom bar the shape is mirrored vertically.
 
-[Browse the gallery](https://github.com/pctrade/end4-pCpresets) · [How to share yours](https://github.com/pctrade/end4-pCpresets#share-your-preset)
+### `floating` / `floating-island`
+
+The widget renders in a separate `LyricsIsland` panel window:
+
+- fully rounded rectangle, using the original pill gradient;
+- anchored 8 px from the top (or bottom) of the screen;
+- hidden from the bar itself;
+- only active while the lyrics widget is present in a bar layout.
 
 ---
 
-## ⚡ Installation
+## Enabling and moving the widget
 
-> [!NOTE]
-> This fork manages its own configuration folder independently — it does **not** overwrite or modify any existing setup. However, it does require [illogical-impulse](https://github.com/end-4/dots-hyprland) to be installed and running.
+The source of truth for visibility is the **bar layout**, not the `enable` flag. Adding `lyricsWidget` to `leftLayout`, `middleLayout`, or `rightLayout` makes it visible; removing it hides it. The `enable` option is kept only as a synced mirror.
 
-```bash
-cd ~/.config/quickshell/
-git clone https://github.com/pctrade/end4-pC.git
-killall qs 2>/dev/null; qs -c end4-pC > /dev/null 2>&1 & disown
+- **Dashboard settings:** `Settings → Dashboard → Bar → Lyrics widget`, then drag **Lyrics** in the bar layout editor.
+- **Classic/minimal settings:** `Settings → Bar → Bar widgets / Layout`.
+
+Legacy config entries using the ID `"LyricsWidget"` are normalized to `"lyricsWidget"` automatically when the layout is saved.
+
+---
+
+## Configuration
+
+All options live under `bar.lyricsWidget` in:
+
+```text
+~/.config/illogical-impulse/config.json
 ```
 
-### 🔧 Set as your default shell (optional)
+### Options
 
-If you like it and want it to load by default instead of `ii`, edit:
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `enable` | bool | `false` | Mirror of layout presence; normally managed by settings. |
+| `mode` | string | `"notch"` | `"notch"`, `"floating"`, or `"floating-island"`. |
+| `useAlbumColor` | bool | `true` | Tint the compact background from the current album art. |
+| `sourceOrder` | string[] | see below | Lyric provider order. Failed providers are skipped. |
+| `translation.targetLanguage` | string | `"id"` | Google/MyMemory/custom translation target. |
+| `translation.customEndpoint` | string | `""` | Optional third translation provider. |
+| `credentials.*` | strings | `""` | Server URLs/tokens for the providers that need them. |
 
-```bash
-~/.config/hypr/hyprland/variables.lua
+### Default source order
+
+```text
+lrclib → netease → kugou → musixmatch → subsonic → jellyfin → applemusic → youtubemusic
 ```
 
-And change this line:
+Behavior:
 
-```lua
-hl.env("qsConfig", "ii")
+- each request has a timeout and a stale-track guard;
+- HTTP errors, timeouts, empty/invalid payloads, or lower-priority results fall through to the next provider;
+- word-timed results (enhanced LRC/YRC) outrank plain line-timed LRC.
+
+### Provider requirements
+
+| ID | Requirement |
+|---|---|
+| `lrclib` | None — public API. |
+| `netease` | None — public API. |
+| `kugou` | None — public lyrics API. |
+| `musixmatch` | Uses a public web token by default; can be overridden. |
+| `subsonic` | Requires `subsonicUrl`, `subsonicUser`, `subsonicPassword`. |
+| `jellyfin` | Requires `jellyfinUrl`, `jellyfinToken`. |
+| `applemusic` | Requires `appleMusicToken` (Apple developer token) via iTunes lookup. |
+| `youtubemusic` | Requires `youTubeMusicApi` (Invidious/Piped base URL) for search + captions. |
+
+Providers without configuration are skipped silently.
+
+### Full example
+
+```json
+{
+  "bar": {
+    "lyricsWidget": {
+      "enable": true,
+      "mode": "notch",
+      "useAlbumColor": true,
+      "sourceOrder": [
+        "lrclib",
+        "netease",
+        "kugou",
+        "musixmatch",
+        "subsonic",
+        "jellyfin",
+        "applemusic",
+        "youtubemusic"
+      ],
+      "translation": {
+        "targetLanguage": "id",
+        "customEndpoint": ""
+      },
+      "credentials": {
+        "musixmatchToken": "20052115310630bcb171d09f9e09f491",
+        "subsonicUrl": "",
+        "subsonicUser": "",
+        "subsonicPassword": "",
+        "jellyfinUrl": "",
+        "jellyfinToken": "",
+        "appleMusicToken": "",
+        "youTubeMusicApi": ""
+      }
+    }
+  }
+}
 ```
-
-to:
-
-```lua
-hl.env("qsConfig", "end4-pC")
-```
-
-> [!TIP]
-> After saving, restart Hyprland or run `hyprctl reload` to apply the change.
 
 ---
 
-### ⚙️ Settings keybind
+## Translation pipeline
 
-To open the settings panel, add this to your Hyprland config:
+For each untranslated line the widget tries:
 
-```lua
-hl.bind("SUPER + escape", hl.dsp.global("quickshell:settingsToggle"), {description = "Toggle settings"})
+1. **Google Translate** (`translate.googleapis.com`) — also supplies romanization for non-Latin scripts.
+2. **MyMemory** — with source-language detection for Japanese, Korean, Chinese, Russian, and English.
+3. **Custom endpoint** — only when `translation.customEndpoint` is set. It is called as:
+
+   ```text
+   <endpoint>?q=<line>&target=<targetLanguage>
+   ```
+
+   and may return plain text or JSON containing `translatedText`, `translation`, or `text`.
+
+If every provider fails, the locally generated romanization is still committed and the queue continues. A stale track id cancels pending work, so results from a previous song are never applied.
+
+---
+
+## Visual tuning
+
+The notch geometry is defined near the top of `modules/ii/bar/LyricsWidget.qml`:
+
+```qml
+readonly property int notchShoulderInset: 22
+readonly property int notchShoulderDrop: Math.max(10, Math.round(root.height * 0.28))
+readonly property int notchBottomRadius: Math.max(12, Math.round(root.height * 0.35))
 ```
 
-> **Note:** Settings is an overlay panel, not a regular window — `Super + Q` won't close it. Use the same keybind to toggle it or press `Escape`.
+The notch gradient strength is in the `LinearGradient` named `notchAlbumGradient` inside the `notchBackground` shape.
 
 ---
 
-## ❓ FAQ
+## Main files
 
-### How do I see my keybinds?
-
-Open the launcher (`SUPER`) and type `<` — it'll show you the full list of configured keybinds.
-
-### Why doesn't Settings have a search bar?
-
-It doesn't need one — the launcher already does that job. Open the launcher (`SUPER`) and just type what you're looking for (e.g. `wallpaper`, `bar`, `blur`); it'll match against page names and section keywords and jump you straight to the right Settings page, so there's no need for a separate search inside Settings itself.
-
----
-
-## 🙏 Credits
-
-Huge thanks to the people who made this possible:
-
-- **[@end-4](https://github.com/end-4)** — for creating the original [dots-hyprland](https://github.com/end-4/dots-hyprland) / illogical-impulse shell. An absolute masterpiece of a dotfiles project 🫡
-- **[@gh0stzk](https://github.com/gh0stzk)** — for providing the weather API integration that made the weather widget possible 🙌
-- **[@StarS2112](https://github.com/StarS2112)** — for showcasing this fork 🙌
-- **[@simeulinuxkaliaiwr](https://github.com/simeulinuxkaliaiwr)** — for some shader transitions 🎨
+| File | Role |
+|---|---|
+| `modules/ii/bar/LyricsWidget.qml` | Widget UI, lyric fetching, translation queue, animations. |
+| `modules/ii/bar/LyricsIsland.qml` | Floating-island panel window and screen-edge geometry. |
+| `modules/ii/bar/BarContent.qml` | Horizontal bar layout rendering/filtering. |
+| `modules/ii/verticalBar/VerticalBarContent.qml` | Vertical bar layout rendering/filtering. |
+| `modules/common/Config.qml` | Options, layout normalization, shared enable helpers. |
+| `modules/ii/settings/pages/BarConfig.qml` | Classic settings and layout editor. |
+| `modules/ii/settings/DashboardSettingsCatalog.qml` | Dashboard settings section. |
+| `modules/ii/settings/DashboardBarWidgets.qml` | Dashboard bar widget catalog. |
+| `modules/ii/settings/DashboardBarLayoutCard.qml` | Dashboard drag/drop layout writes. |
+| `panelFamilies/IllogicalImpulseFamily.qml` | Floating-island panel activation. |
 
 ---
 
-<div align="center">
+## Troubleshooting
 
-Made with ❤️ — feel free to fork and make it your own
-
-</div>
+- **No lyrics appear:** confirm the widget is actually in a bar layout, then check `sourceOrder` and credentials for the providers you enabled.
+- **Only plain line sync:** the matched source did not return enhanced LRC/YRC; try reordering providers.
+- **Wrong translation language:** set `bar.lyricsWidget.translation.targetLanguage`.
+- **Widget appears in the bar while floating mode is active:** remove it from the bar layout; floating mode follows layout presence.
+- **Results from the previous song show up:** stale-track guards should prevent this; if it persists, restart Quickshell.
