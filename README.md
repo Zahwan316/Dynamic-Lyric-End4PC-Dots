@@ -75,6 +75,7 @@ All options live under `bar.lyricsWidget` in:
 |---|---|---|---|
 | `enable` | bool | `false` | Mirror of layout presence; normally managed by settings. |
 | `mode` | string | `"notch"` | `"notch"`, `"floating"`, or `"floating-island"`. |
+| `size` | string | `"default"` | Compact/expanded widget scale for notch and floating island: `"extra-small"`, `"small"`, `"default"`, `"medium"`, `"large"`, `"very-large"`. |
 | `useAlbumColor` | bool | `true` | Tint the compact background from the current album art. |
 | `enableKaraoke` | bool | `true` | Animate the current line word-by-word. When off, the whole active line is simply highlighted. |
 | `sourceOrder` | string[] | see below | Lyric provider order. Failed providers are skipped. |
@@ -117,6 +118,7 @@ Providers without configuration are skipped silently.
     "lyricsWidget": {
       "enable": true,
       "mode": "notch",
+      "size": "default",
       "useAlbumColor": true,
       "enableKaraoke": true,
       "sourceOrder": [
@@ -175,10 +177,12 @@ The target language is selectable in **Settings → Bar → Lyrics widget → Tr
 The notch geometry is defined near the top of `modules/ii/bar/LyricsWidget.qml`:
 
 ```qml
-readonly property int notchShoulderInset: 22
-readonly property int notchShoulderDrop: Math.max(10, Math.round(root.height * 0.28))
-readonly property int notchBottomRadius: Math.max(12, Math.round(root.height * 0.35))
+readonly property int notchShoulderInset: Math.round(root.sp(22))
+readonly property int notchShoulderDrop: Math.max(root.sp(10), Math.round(root.height * 0.28))
+readonly property int notchBottomRadius: Math.max(root.sp(12), Math.round(root.height * 0.35))
 ```
+
+The `size` option maps to `widgetScale` (0.8 / 0.9 / 1.0 / 1.1 / 1.25 / 1.4). The `sp()` helper scales pixel sizes for both placements and the expanded card.
 
 The notch gradient strength is in the `LinearGradient` named `notchAlbumGradient` inside the `notchBackground` shape.
 

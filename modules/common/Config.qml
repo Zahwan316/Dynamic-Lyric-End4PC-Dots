@@ -681,6 +681,8 @@ Singleton {
                 property JsonObject lyricsWidget: JsonObject {
                     property bool enable: false
                     property string mode: "notch" // "notch" | "floating"
+                    // "extra-small" | "small" | "default" | "medium" | "large" | "very-large"
+                    property string size: "default"
                     property bool useAlbumColor: true
                     property bool enableKaraoke: true
 

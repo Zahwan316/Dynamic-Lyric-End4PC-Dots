@@ -44,6 +44,17 @@ QtObject {
         ];
     }
 
+    function lyricSizeOptions() {
+        return [
+            { displayName: Translation.tr("Extra small"), icon: "format_size", value: "extra-small" },
+            { displayName: Translation.tr("Small"),        icon: "format_size", value: "small" },
+            { displayName: Translation.tr("Default"),       icon: "format_size", value: "default" },
+            { displayName: Translation.tr("Medium"),        icon: "format_size", value: "medium" },
+            { displayName: Translation.tr("Large"),         icon: "format_size", value: "large" },
+            { displayName: Translation.tr("Very large"),    icon: "format_size", value: "very-large" }
+        ];
+    }
+
     function roleColor(name) {
         if (name === "black") return "black";
         return Appearance.colors["col" + name.charAt(0).toUpperCase() + name.slice(1)] ?? Appearance.getColorFromName(name);
@@ -144,6 +155,7 @@ QtObject {
         "bar:Preferred player": { type: "text", get: () => Config.options.bar.media.preferredPlayer, set: v => { Config.options.bar.media.preferredPlayer = v; } },
         "bar:Show lyrics widget": { type: "switch", get: () => Config.lyricsWidgetInLayout, set: v => Config.setLyricsWidgetEnabled(v) },
         "bar:Placement": { type: "select", get: () => Config.options.bar.lyricsWidget?.mode ?? "notch", set: v => { Config.options.bar.lyricsWidget.mode = v; }, options: [{ displayName: Translation.tr("Notch"), icon: "crop_landscape", value: "notch" }, { displayName: Translation.tr("Floating island"), icon: "web_asset", value: "floating" }] },
+        "bar:Lyrics widget size": { type: "select", get: () => Config.options.bar.lyricsWidget?.size ?? "default", set: v => { Config.options.bar.lyricsWidget.size = v; }, options: lyricSizeOptions() },
         "bar:Use album cover color": { type: "switch", get: () => Config.options.bar.lyricsWidget?.useAlbumColor ?? true, set: v => { Config.options.bar.lyricsWidget.useAlbumColor = v; } },
         "bar:Enable karaoke": { type: "switch", get: () => Config.options.bar.lyricsWidget?.enableKaraoke ?? true, set: v => { Config.options.bar.lyricsWidget.enableKaraoke = v; } },
         "bar:Translation language": { type: "select", get: () => Config.options.bar.lyricsWidget?.translation?.targetLanguage ?? "id", set: v => { Config.options.bar.lyricsWidget.translation.targetLanguage = v; }, options: lyricTranslationTargetOptions() },
@@ -361,6 +373,7 @@ QtObject {
             page: Translation.tr("Bar"), title: Translation.tr("Lyrics widget"), icon: "lyrics", kw: "lyric lyrics song karaoke", cards: [
                 { type: "toggle", key: "bar:Show lyrics widget", title: Translation.tr("Show lyrics widget"), icon: "visibility", kw: "lyrics enable disable show hide" },
                 { type: "select", key: "bar:Placement", title: Translation.tr("Placement"), icon: "dashboard_customize", kw: "notch floating island position" },
+                { type: "select", key: "bar:Lyrics widget size", title: Translation.tr("Size"), icon: "format_size", kw: "notch floating island size extra small medium large scale" },
                 { type: "toggle", key: "bar:Use album cover color", title: Translation.tr("Use album cover color"), icon: "palette", kw: "album art cover accent tint" },
                 { type: "toggle", key: "bar:Enable karaoke", title: Translation.tr("Enable karaoke"), icon: "graphic_eq", kw: "karaoke word highlight sweep disable" },
                 { type: "select", key: "bar:Translation language", title: Translation.tr("Translation language"), icon: "translate", kw: "translate target language indonesian english japanese korean" }

@@ -459,6 +459,25 @@ ContentPage {
                     ]
                 }
 
+                ConfigComboBox {
+                    enabled: Config.lyricsWidgetInLayout
+                    opacity: enabled ? 1 : 0.4
+                    text: Translation.tr("Size")
+                    buttonIcon: "format_size"
+                    fieldWidth: 160
+                    fixedWidth: true
+                    currentValue: Config.options.bar.lyricsWidget?.size ?? "default"
+                    onSelected: newValue => { Config.options.bar.lyricsWidget.size = newValue }
+                    model: [
+                        { displayName: Translation.tr("Extra small"), value: "extra-small" },
+                        { displayName: Translation.tr("Small"),        value: "small" },
+                        { displayName: Translation.tr("Default"),       value: "default" },
+                        { displayName: Translation.tr("Medium"),        value: "medium" },
+                        { displayName: Translation.tr("Large"),         value: "large" },
+                        { displayName: Translation.tr("Very large"),    value: "very-large" }
+                    ]
+                }
+
                 ConfigSwitch {
                     enabled: Config.lyricsWidgetInLayout
                     opacity: enabled ? 1 : 0.4

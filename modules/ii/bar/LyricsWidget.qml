@@ -37,14 +37,26 @@ Rectangle {
             enqueueTranslationLines(pending, false)
     }
     readonly property bool isFloatingIsland: placementMode === "floating" || placementMode === "floating-island"
+    // Ukuran compact (notch & floating island) dan kartu expanded ikut skala ini.
+    readonly property string widgetSize: Config.options.bar.lyricsWidget?.size ?? "default"
+    readonly property real widgetScale: ({
+        "extra-small": 0.8,
+        "small": 0.9,
+        "default": 1.0,
+        "medium": 1.1,
+        "large": 1.25,
+        "very-large": 1.4
+    })[widgetSize] ?? 1.0
+    function sp(value) { return value * root.widgetScale }
+
     // Kedua mode memakai siluet notch: hitam, leher rata di tepi layar/bar,
     // sudut bawah membulat. Floating island hanya digeser sedikit dari tepi atas.
     readonly property bool notchAtTop: !Config.options.bar.bottom
     // Notch Mac: bahu cekung di tepi bar, badan lebih sempit,
     // lalu sudut bawah membulat.
-    readonly property int notchShoulderInset: 22
-    readonly property int notchShoulderDrop: Math.max(10, Math.round(root.height * 0.28))
-    readonly property int notchBottomRadius: Math.max(12, Math.round(root.height * 0.35))
+    readonly property int notchShoulderInset: Math.round(root.sp(22))
+    readonly property int notchShoulderDrop: Math.max(root.sp(10), Math.round(root.height * 0.28))
+    readonly property int notchBottomRadius: Math.max(root.sp(12), Math.round(root.height * 0.35))
 
     // --- Konfigurasi Tema, Posisi & Ukuran ---
     property color bgColor: "#000000"
@@ -54,7 +66,7 @@ Rectangle {
     property color lyricActiveColor: "#ffffff"
     property color lyricDimColor: Qt.rgba(1.0, 1.0, 1.0, 0.36)
     property color subTextColor: Qt.rgba(1.0, 1.0, 1.0, 0.72)
-    property real maxCompactLyricWidth: 420
+    readonly property real maxCompactLyricWidth: root.sp(420)
     property int yOffset: 0
 
     readonly property real expandedWidth: 492
@@ -463,17 +475,17 @@ Rectangle {
     readonly property int currentTierCount: activeSlotItem ? activeSlotItem.tierCount : 1
 
     readonly property real compactTargetWidth: isIslandVisible
-        ? Math.max(96, (currentTierCount >= 3 ? 30 : 26) + currentTextWidth + 36 + 34)
+        ? Math.max(root.sp(96), (currentTierCount >= 3 ? root.sp(30) : root.sp(26)) + currentTextWidth + root.sp(36) + root.sp(34))
             + (isFloatingIsland ? 0 : notchShoulderInset * 2)
-        : 36
+        : root.sp(36)
     readonly property real compactTargetHeight: {
         if (!isIslandVisible)
-            return 40
+            return root.sp(40)
         if (currentTierCount >= 3)
-            return 50
+            return root.sp(50)
         if (currentTierCount === 2)
-            return 42
-        return 38
+            return root.sp(42)
+        return root.sp(38)
     }
 
     // --- Ukuran Kapsul di Top Bar (Gradasi #000000 -> Warna Cover Album, Tanpa Border) ---
@@ -2778,26 +2790,26 @@ Rectangle {
                 id: instrumentalRow
                 visible: lineItem.isInstrumental
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: 7
+                spacing: root.sp(7)
 
                 Text {
                     text: "󰎇"
                     color: root.effectiveSliderColor
-                    font.pixelSize: 15
+                    font.pixelSize: root.sp(15)
                     anchors.verticalCenter: parent.verticalCenter
                 }
 
                 Row {
-                    spacing: 4
+                    spacing: root.sp(4)
                     anchors.verticalCenter: parent.verticalCenter
 
                     Repeater {
                         model: 3
                         delegate: Rectangle {
                             required property int index
-                            width: 4
-                            height: 4
-                            radius: 2
+                            width: root.sp(4)
+                            height: root.sp(4)
+                            radius: root.sp(2)
                             color: root.lyricActiveColor
                             opacity: 0.45
 
@@ -2831,7 +2843,7 @@ Rectangle {
                         id: origDimText
                         text: lineItem.rawText
                         color: root.lyricDimColor
-                        font.pixelSize: lineItem.tierCount >= 3 ? 13 : (lineItem.tierCount === 2 ? 14 : 15)
+                        font.pixelSize: root.sp(lineItem.tierCount >= 3 ? 13 : (lineItem.tierCount === 2 ? 14 : 15))
                         font.weight: Font.DemiBold
                     }
 
@@ -2845,7 +2857,7 @@ Rectangle {
                         Text {
                             text: lineItem.rawText
                             color: root.lyricActiveColor
-                            font.pixelSize: lineItem.tierCount >= 3 ? 13 : (lineItem.tierCount === 2 ? 14 : 15)
+                            font.pixelSize: root.sp(lineItem.tierCount >= 3 ? 13 : (lineItem.tierCount === 2 ? 14 : 15))
                             font.weight: Font.DemiBold
                         }
                     }
@@ -2863,7 +2875,7 @@ Rectangle {
                         color: lineItem.romajiDimCol
                         // Harus sama dengan teks aktif di overlay, kalau tidak
                         // huruf yang belum dinyanyikan tampak lebih kecil.
-                        font.pixelSize: lineItem.primaryIsRomaji ? 14 : 12
+                        font.pixelSize: root.sp(lineItem.primaryIsRomaji ? 14 : 12)
                         font.weight: Font.Medium
                     }
 
@@ -2877,7 +2889,7 @@ Rectangle {
                         Text {
                             text: lineItem.romanizedText
                             color: lineItem.romajiActiveCol
-                            font.pixelSize: lineItem.primaryIsRomaji ? 14 : 12
+                            font.pixelSize: root.sp(lineItem.primaryIsRomaji ? 14 : 12)
                             font.weight: Font.Medium
                         }
                     }
@@ -2888,7 +2900,7 @@ Rectangle {
                     visible: lineItem.showThirdLine
                     text: lineItem.translatedText
                     color: root.subTextColor
-                    font.pixelSize: lineItem.primaryIsTrans ? 14 : 11
+                    font.pixelSize: root.sp(lineItem.primaryIsTrans ? 14 : 11)
                     elide: Text.ElideRight
                     width: Math.min(implicitWidth, root.maxCompactLyricWidth)
                 }
@@ -2903,7 +2915,7 @@ Rectangle {
         id: floatingBackground
         anchors.fill: parent
         visible: root.isFloatingIsland
-        radius: 24
+        radius: root.sp(24)
         gradient: Gradient {
             GradientStop { position: 0.0; color: "#000000" }
             GradientStop {
@@ -3028,12 +3040,12 @@ Rectangle {
         RowLayout {
             id: compactView
             anchors.centerIn: parent
-            spacing: 10
+            spacing: root.sp(10)
 
             ClippingRectangle {
-                Layout.preferredWidth: 28
-                Layout.preferredHeight: 28
-                radius: root.isFloatingIsland ? 6 : 8
+                Layout.preferredWidth: root.sp(28)
+                Layout.preferredHeight: root.sp(28)
+                radius: root.sp(root.isFloatingIsland ? 6 : 8)
                 color: "#141414"
                 border.width: root.isFloatingIsland ? 0 : 1
                 border.color: Qt.rgba(1, 1, 1, 0.08)
@@ -3064,7 +3076,7 @@ Rectangle {
                     visible: compactArt.opacity < 0.1
                     text: "󰎆"
                     color: root.effectiveSliderColor
-                    font.pixelSize: 12
+                    font.pixelSize: root.sp(12)
                 }
             }
 
@@ -3104,7 +3116,7 @@ Rectangle {
 
             Row {
                 Layout.alignment: Qt.AlignVCenter
-                spacing: 2
+                spacing: root.sp(2)
 
                 Repeater {
                     model: [
@@ -3115,17 +3127,17 @@ Rectangle {
 
                     delegate: Rectangle {
                         required property var modelData
-                        width: 2.5
-                        height: root.isPlaying ? modelData.maxH : modelData.minH
-                        radius: 1.25
+                        width: root.sp(2.5)
+                        height: root.isPlaying ? root.sp(modelData.maxH) : root.sp(modelData.minH)
+                        radius: root.sp(1.25)
                         color: root.effectiveSliderColor
                         anchors.verticalCenter: parent.verticalCenter
 
                         SequentialAnimation on height {
                             running: root.isPlaying && root.isIslandVisible && !root.isExpanded
                             loops: Animation.Infinite
-                            NumberAnimation { to: modelData.maxH; duration: modelData.speed; easing.type: Easing.InOutSine }
-                            NumberAnimation { to: modelData.minH; duration: modelData.speed; easing.type: Easing.InOutSine }
+                            NumberAnimation { to: root.sp(modelData.maxH); duration: modelData.speed; easing.type: Easing.InOutSine }
+                            NumberAnimation { to: root.sp(modelData.minH); duration: modelData.speed; easing.type: Easing.InOutSine }
                         }
 
                         Behavior on height {
@@ -3160,8 +3172,8 @@ Rectangle {
         id: expandedPopup
         visible: root.isExpanded || root.morphProgress > 0.01
         color: "transparent"
-        implicitWidth: root.expandedWidth + 48
-        implicitHeight: root.expandedHeight + 48
+        implicitWidth: root.sp(root.expandedWidth + 48)
+        implicitHeight: root.sp(root.expandedHeight + 48)
 
         anchor.window: root.QsWindow.window
         anchor.rect: root.cachedAnchorRect
@@ -3177,9 +3189,9 @@ Rectangle {
 
                 // Morphing memakai ukuran compact yang dibekukan saat ekspansi,
                 // dan progress di-clamp agar OutBack tidak membuat kartu bergetar.
-                width: morphBaseWidth + ((root.expandedWidth - morphBaseWidth) * Math.max(0.0, Math.min(1.0, root.morphProgress)))
-                height: morphBaseHeight + ((root.expandedHeight - morphBaseHeight) * Math.max(0.0, Math.min(1.0, root.morphProgress)))
-                radius: 12 + (14 * Math.max(0.0, Math.min(1.0, root.morphProgress)))
+                width: morphBaseWidth + ((root.sp(root.expandedWidth) - morphBaseWidth) * Math.max(0.0, Math.min(1.0, root.morphProgress)))
+                height: morphBaseHeight + ((root.sp(root.expandedHeight) - morphBaseHeight) * Math.max(0.0, Math.min(1.0, root.morphProgress)))
+                radius: root.sp(12 + (14 * Math.max(0.0, Math.min(1.0, root.morphProgress))))
                 border.width: 0
                 border.color: "transparent"
                 clip: true
@@ -3214,11 +3226,11 @@ Rectangle {
                     id: expandedContentWrapper
                     width: root.expandedWidth
                     height: root.expandedHeight
-                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.left: parent.left
                     anchors.top: parent.top
                     opacity: Math.max(0.0, Math.min(1.0, (root.morphProgress - 0.14) / 0.65))
-                    scale: 0.90 + (0.10 * Math.max(0.0, Math.min(1.0, root.morphProgress)))
-                    transformOrigin: Item.Top
+                    scale: root.widgetScale * (0.90 + (0.10 * Math.max(0.0, Math.min(1.0, root.morphProgress))))
+                    transformOrigin: Item.TopLeft
 
                     // =============================================================
                     // KOLOM KIRI: ALBUM ART, JUDUL/ARTIS, CUSTOM SLIDER & KONTROL
