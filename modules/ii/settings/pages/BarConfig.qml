@@ -467,6 +467,15 @@ ContentPage {
                     checked: Config.options.bar.lyricsWidget?.useAlbumColor ?? true
                     onCheckedChanged: { Config.options.bar.lyricsWidget.useAlbumColor = checked; }
                 }
+
+                ConfigSwitch {
+                    enabled: Config.lyricsWidgetInLayout
+                    opacity: enabled ? 1 : 0.4
+                    buttonIcon: "graphic_eq"
+                    text: Translation.tr("Enable karaoke")
+                    checked: Config.options.bar.lyricsWidget?.enableKaraoke ?? true
+                    onCheckedChanged: { Config.options.bar.lyricsWidget.enableKaraoke = checked; }
+                }
             }
         }
 

@@ -76,6 +76,7 @@ All options live under `bar.lyricsWidget` in:
 | `enable` | bool | `false` | Mirror of layout presence; normally managed by settings. |
 | `mode` | string | `"notch"` | `"notch"`, `"floating"`, or `"floating-island"`. |
 | `useAlbumColor` | bool | `true` | Tint the compact background from the current album art. |
+| `enableKaraoke` | bool | `true` | Animate the current line word-by-word. When off, the whole active line is simply highlighted. |
 | `sourceOrder` | string[] | see below | Lyric provider order. Failed providers are skipped. |
 | `translation.targetLanguage` | string | `"id"` | Google/MyMemory/custom translation target. |
 | `translation.customEndpoint` | string | `""` | Optional third translation provider. |
@@ -117,6 +118,7 @@ Providers without configuration are skipped silently.
       "enable": true,
       "mode": "notch",
       "useAlbumColor": true,
+      "enableKaraoke": true,
       "sourceOrder": [
         "lrclib",
         "netease",
@@ -200,6 +202,7 @@ The notch gradient strength is in the `LinearGradient` named `notchAlbumGradient
 ## Troubleshooting
 
 - **No lyrics appear:** confirm the widget is actually in a bar layout, then check `sourceOrder` and credentials for the providers you enabled.
+- **Spotify / live lyrics do not appear:** set `bar.media.preferredPlayer` to `spotify` (or the exact player identity) in Settings → Bar → Preferred player. The widget now follows that preference instead of picking the first playing MPRIS bus. Live lines from `sptlrx` are also allowed through even when a synced LRC exists, which fixes long instrumental intros.
 - **Only plain line sync:** the matched source did not return enhanced LRC/YRC; try reordering providers.
 - **Wrong translation language:** set `bar.lyricsWidget.translation.targetLanguage`.
 - **Widget appears in the bar while floating mode is active:** remove it from the bar layout; floating mode follows layout presence.

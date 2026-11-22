@@ -7,6 +7,7 @@ import Quickshell.Io
 import Quickshell.Widgets
 import Quickshell.Services.Mpris
 import qs.modules.common
+import qs.services
 
 Rectangle {
     id: root
@@ -14,6 +15,8 @@ Rectangle {
     // --- Opsi dari Settings > Bar > Lyrics widget ---
     property string placementMode: Config.options.bar.lyricsWidget?.mode ?? "notch"
     property bool useAlbumColor: Config.options.bar.lyricsWidget?.useAlbumColor ?? true
+    property bool enableKaraoke: Config.options.bar.lyricsWidget?.enableKaraoke ?? true
+    onEnableKaraokeChanged: if (!enableKaraoke) karaokeProgress = 1.0
     readonly property bool isFloatingIsland: placementMode === "floating" || placementMode === "floating-island"
     // Kedua mode memakai siluet notch: hitam, leher rata di tepi layar/bar,
     // sudut bawah membulat. Floating island hanya digeser sedikit dari tepi atas.
@@ -117,6 +120,12 @@ Rectangle {
     property double lastFallbackLineMs: 0.0
     property int lastFallbackCharCount: 0
     property real adaptiveMsPerChar: 72.0
+    // Baris live (sptlrx) sesegera mengalahkan auto-advance model tersinkron.
+    property double lastLiveLineWallMs: 0.0
+
+    // Retry fetch saat durasi baru diketahui (umum pada Spotify/MPRIS awal).
+    property real lastFetchDurationSec: -1.0
+    property string lastFetchTrackId: ""
 
     // --- State Slider Musik & Durasi ---
     property real fallbackTrackLengthSec: 0.0
@@ -400,20 +409,9 @@ Rectangle {
         }
     }
 
-    // Ambil MPRIS player yang sedang aktif (prioritas Playing)
-    readonly property var activePlayer: {
-        const players = Mpris.players.values
-        if (!players || players.length === 0)
-            return null
-        let pausedPlayer = null
-        for (let i = 0; i < players.length; i++) {
-            if (players[i].playbackState === MprisPlaybackState.Playing)
-                return players[i]
-            if (!pausedPlayer && players[i].playbackState === MprisPlaybackState.Paused)
-                pausedPlayer = players[i]
-        }
-        return pausedPlayer ? pausedPlayer : players[0]
-    }
+    // Pakai selector pusat agar "Preferred player" (mis. spotify) dihormati,
+    // duplicate player difilter, dan player yang baru mulai dipakai dipantau.
+    readonly property var activePlayer: MprisController.activePlayer
 
     readonly property string activePlayerName: {
         if (!activePlayer)
@@ -429,7 +427,9 @@ Rectangle {
     readonly property string trackTitle: activePlayer ? (activePlayer.trackTitle ?? "") : ""
     readonly property string trackArtist: activePlayer ? (activePlayer.trackArtist ?? "") : ""
     readonly property string trackAlbum: activePlayer ? (activePlayer.trackAlbum ?? "") : ""
-    readonly property string currentTrackId: activePlayer ? (trackTitle + "|" + trackArtist) : ""
+    readonly property string currentTrackId: activePlayer
+        ? (trackTitle + "|" + trackArtist + "|" + String(activePlayer.metadata?.["mpris:trackid"] ?? ""))
+        : ""
 
     readonly property bool isIslandVisible: true
 
@@ -546,6 +546,7 @@ Rectangle {
                 const micro = parseFloat(data.trim())
                 if (!isNaN(micro) && micro > 1000000) {
                     root.fallbackTrackLengthSec = micro / 1000000.0
+                    root.retryLyricsFetchIfNeeded()
                 }
             }
         }
@@ -867,6 +868,10 @@ Rectangle {
     }
 
     function evaluateKaraokeProgress(elapsedSec) {
+        // Karaoke dimatikan: seluruh baris aktif langsung terisi, tanpa sapuan.
+        if (!root.enableKaraoke)
+            return 1.0
+
         const words = root.activeWordTimings
         if (words && words.length > 0) {
             if (elapsedSec <= words[0].relStart)
@@ -900,7 +905,10 @@ Rectangle {
                 : calPos
         }
 
-        if (root.hasReliablePlayerClock && root.hasSyncedLrc && lyricModel.count > 0) {
+        const liveLineFresh = root.lastLiveLineWallMs > 0
+            && (Date.now() - root.lastLiveLineWallMs) < 3500
+
+        if (!liveLineFresh && root.hasReliablePlayerClock && root.hasSyncedLrc && lyricModel.count > 0) {
             if (calPos >= 0.0) {
                 let targetIdx = -1
                 const lookupPos = calPos
@@ -973,6 +981,12 @@ Rectangle {
         function onRateChanged() {
             root.anchorPlayerPos = root.getRawLivePositionSec()
             root.anchorWallMs = Date.now()
+        }
+        function onLengthChanged() {
+            root.retryLyricsFetchIfNeeded()
+        }
+        function onPlaybackStateChanged() {
+            root.retryLyricsFetchIfNeeded()
         }
     }
 
@@ -1537,10 +1551,24 @@ Rectangle {
             done: null
         }
         root.lyricFetchContext = ctx
+        root.lastFetchDurationSec = ctx.durationSec
+        root.lastFetchTrackId = trackSnapshot
         tryLyricProvider(0, order, ctx)
     }
 
     property var lyricFetchContext: null
+
+    function retryLyricsFetchIfNeeded() {
+        const id = root.currentTrackId
+        if (!id || id !== root.lastFetchTrackId)
+            return
+        if (root.hasSyncedLrc || lyricModel.count > 0)
+            return
+        const dur = root.trackDurationSec
+        if (Math.abs(dur - root.lastFetchDurationSec) < 0.5)
+            return
+        fetchExternalLyrics(root.trackTitle, root.trackArtist, root.trackAlbum, dur)
+    }
 
     function tryLyricProvider(index, order, ctx) {
         if (!ctx || ctx.trackSnapshot && root.currentTrackId !== ctx.trackSnapshot)
@@ -2264,6 +2292,7 @@ Rectangle {
             lyricModel.append(entry)
         }
         root.hasSyncedLrc = true
+        root.lastLiveLineWallMs = 0.0
         syncClockAnchor(true)
         syncIndexWithCurrentState()
 
@@ -2402,10 +2431,13 @@ Rectangle {
             lastFallbackLineMs = 0
             lastFallbackCharCount = 0
             adaptiveMsPerChar = 72.0
+            lastLiveLineWallMs = 0.0
+            lastFetchDurationSec = -1.0
+            lastFetchTrackId = ""
             lyricModel.clear()
             syncClockAnchor(true)
             showFallbackLine()
-            fetchExternalLyrics(trackTitle, trackArtist, trackAlbum, activePlayer ? activePlayer.length : 0)
+            fetchExternalLyrics(trackTitle, trackArtist, trackAlbum, root.trackDurationSec)
         }
     }
 
@@ -2480,10 +2512,9 @@ Rectangle {
     }
 
     function updateLyricLine(newLine) {
-        if (root.hasSyncedLrc && root.hasReliablePlayerClock) {
-            return
-        }
-
+        // Jangan buang baris live hanya karena LRC tersinkron sudah ada.
+        // Spotify sering punya intro instrumental panjang sebelum baris LRC
+        // pertama; sptlrx tetap harus bisa menampilkan lirik di situ.
         if (isInstrumentalText(newLine)) {
             root.currentRawLyric = ""
             if (root.sessionActive || root.hasActivePlayer) {
@@ -2502,6 +2533,7 @@ Rectangle {
         if (root.hasSyncedLrc) {
             const matchedIdx = findBestMatchingIndex(newLine, calPos)
             if (matchedIdx !== -1) {
+                root.lastLiveLineWallMs = 0.0
                 if (matchedIdx !== root.activeLyricIndex || root.isLoadingLyrics || root.isInstrumentalLine) {
                     activateSyncedIndex(matchedIdx, false)
                 }
@@ -2531,9 +2563,12 @@ Rectangle {
 
         root.lastFallbackLineMs = nowMs
         root.lastFallbackCharCount = measureLen
+        root.lastLiveLineWallMs = nowMs
         root.lineStartWallMs = nowMs
         root.pauseStartedWallMs = root.isPlaying ? 0.0 : nowMs
-        root.activeLineStartSec = 0.0
+        // -1 membuat progres karaoke memakai wall clock untuk baris live,
+        // bukan posisi absolut player (yang sudah jauh melewati awal baris).
+        root.activeLineStartSec = -1.0
         root.activeLineDurationSec = estDur
         root.activeWordTimings = buildRelativeWordTimings(newLine, estDur)
 
@@ -2591,7 +2626,7 @@ Rectangle {
             trackChangeWallMs = Date.now()
             syncClockAnchor(true)
             showFallbackLine()
-            fetchExternalLyrics(trackTitle, trackArtist, trackAlbum, activePlayer ? activePlayer.length : 0)
+            fetchExternalLyrics(trackTitle, trackArtist, trackAlbum, root.trackDurationSec)
             extractColorsFromArt(albumArtUrl)
         }
     }

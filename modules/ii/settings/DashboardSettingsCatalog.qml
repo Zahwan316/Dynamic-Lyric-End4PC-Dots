@@ -127,6 +127,7 @@ QtObject {
         "bar:Show lyrics widget": { type: "switch", get: () => Config.lyricsWidgetInLayout, set: v => Config.setLyricsWidgetEnabled(v) },
         "bar:Placement": { type: "select", get: () => Config.options.bar.lyricsWidget?.mode ?? "notch", set: v => { Config.options.bar.lyricsWidget.mode = v; }, options: [{ displayName: Translation.tr("Notch"), icon: "crop_landscape", value: "notch" }, { displayName: Translation.tr("Floating island"), icon: "web_asset", value: "floating" }] },
         "bar:Use album cover color": { type: "switch", get: () => Config.options.bar.lyricsWidget?.useAlbumColor ?? true, set: v => { Config.options.bar.lyricsWidget.useAlbumColor = v; } },
+        "bar:Enable karaoke": { type: "switch", get: () => Config.options.bar.lyricsWidget?.enableKaraoke ?? true, set: v => { Config.options.bar.lyricsWidget.enableKaraoke = v; } },
         "hyprland:Active border color": { type: "select", get: () => Config.options.hyprland.general.borderColor.activeRole, set: v => { Config.options.hyprland.general.borderColor.activeRole = v; HyprlandConfig.applyBorderColors(); }, get options() { return ["primary", "secondary", "tertiary", "primaryContainer", "secondaryContainer", "tertiaryContainer", "layer0Border"].map(name => ({ value: name, color: roleColor(name) })); } },
         "hyprland:Active border opacity": { type: "spin", get: () => Math.round(Config.options.hyprland.general.borderColor.activeOpacity * 100), set: v => { Config.options.hyprland.general.borderColor.activeOpacity = v / 100.0; HyprlandConfig.applyBorderColors(); }, from: 0, to: 100, stepSize: 5 },
         "hyprland:Inactive border color": { type: "select", get: () => Config.options.hyprland.general.borderColor.inactiveRole, set: v => { Config.options.hyprland.general.borderColor.inactiveRole = v; HyprlandConfig.applyBorderColors(); }, get options() { return ["primary", "secondary", "tertiary", "primaryContainer", "secondaryContainer", "tertiaryContainer", "layer0Border"].map(name => ({ value: name, color: roleColor(name) })); } },
@@ -341,7 +342,8 @@ QtObject {
             page: Translation.tr("Bar"), title: Translation.tr("Lyrics widget"), icon: "lyrics", kw: "lyric lyrics song karaoke", cards: [
                 { type: "toggle", key: "bar:Show lyrics widget", title: Translation.tr("Show lyrics widget"), icon: "visibility", kw: "lyrics enable disable show hide" },
                 { type: "select", key: "bar:Placement", title: Translation.tr("Placement"), icon: "dashboard_customize", kw: "notch floating island position" },
-                { type: "toggle", key: "bar:Use album cover color", title: Translation.tr("Use album cover color"), icon: "palette", kw: "album art cover accent tint" }
+                { type: "toggle", key: "bar:Use album cover color", title: Translation.tr("Use album cover color"), icon: "palette", kw: "album art cover accent tint" },
+                { type: "toggle", key: "bar:Enable karaoke", title: Translation.tr("Enable karaoke"), icon: "graphic_eq", kw: "karaoke word highlight sweep disable" }
             ]
         },
         {
