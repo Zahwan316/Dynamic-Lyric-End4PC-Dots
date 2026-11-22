@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Effects
+import QtQuick.Shapes
 import Quickshell
 import Quickshell.Io
 import Quickshell.Widgets
@@ -17,6 +18,11 @@ Rectangle {
     // Kedua mode memakai siluet notch: hitam, leher rata di tepi layar/bar,
     // sudut bawah membulat. Floating island hanya digeser sedikit dari tepi atas.
     readonly property bool notchAtTop: !Config.options.bar.bottom
+    // Notch Mac: bahu cekung di tepi bar, badan lebih sempit,
+    // lalu sudut bawah membulat.
+    readonly property int notchShoulderInset: 22
+    readonly property int notchShoulderDrop: Math.max(10, Math.round(root.height * 0.28))
+    readonly property int notchBottomRadius: Math.max(12, Math.round(root.height * 0.35))
 
     // --- Konfigurasi Tema, Posisi & Ukuran ---
     property color bgColor: "#000000"
@@ -439,6 +445,7 @@ Rectangle {
 
     readonly property real compactTargetWidth: isIslandVisible
         ? Math.max(96, (currentTierCount >= 3 ? 30 : 26) + currentTextWidth + 36 + 34)
+            + (isFloatingIsland ? 0 : notchShoulderInset * 2)
         : 36
     readonly property real compactTargetHeight: {
         if (!isIslandVisible)
@@ -462,36 +469,13 @@ Rectangle {
     Layout.preferredHeight: implicitHeight
     Layout.minimumWidth: implicitWidth
     Layout.minimumHeight: implicitHeight
-    // Notch: rata di tepi bar/layar, membulat di sisi dalam.
-    // Floating island: kembali ke kapsul rounded penuh seperti desain awal.
-    radius: isFloatingIsland ? 24 : 20
-    topLeftRadius: isFloatingIsland ? radius : (notchAtTop ? 0 : radius)
-    topRightRadius: isFloatingIsland ? radius : (notchAtTop ? 0 : radius)
-    bottomLeftRadius: isFloatingIsland ? radius : (notchAtTop ? radius : 0)
-    bottomRightRadius: isFloatingIsland ? radius : (notchAtTop ? radius : 0)
+    // Background digambar oleh child di bawah agar notch bisa memakai
+    // bentuk bahu cekung, sementara floating island tetap rounded penuh.
+    color: "transparent"
+    radius: 0
     border.width: 0
     border.color: "transparent"
     clip: true
-
-    gradient: Gradient {
-        GradientStop { position: 0.0; color: "#000000" }
-        GradientStop {
-            position: 0.62
-            color: root.useAlbumColor
-                ? Qt.tint(isFloatingIsland ? "#070707" : "#050505",
-                          Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b,
-                                  isFloatingIsland ? 0.28 : 0.18))
-                : "#000000"
-        }
-        GradientStop {
-            position: 1.0
-            color: root.useAlbumColor
-                ? (isFloatingIsland
-                    ? root.effectiveAccentColor
-                    : Qt.tint("#070707", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.42)))
-                : "#000000"
-        }
-    }
 
     Behavior on implicitWidth {
         NumberAnimation {
@@ -2802,6 +2786,109 @@ Rectangle {
                     elide: Text.ElideRight
                     width: Math.min(implicitWidth, root.maxCompactLyricWidth)
                 }
+            }
+        }
+    }
+
+    // =========================================================================
+    // Background compact: notch Mac dengan bahu cekung / floating rounded penuh
+    // =========================================================================
+    Rectangle {
+        id: floatingBackground
+        anchors.fill: parent
+        visible: root.isFloatingIsland
+        radius: 24
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: "#000000" }
+            GradientStop {
+                position: 0.62
+                color: root.useAlbumColor
+                    ? Qt.tint("#070707", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.28))
+                    : "#000000"
+            }
+            GradientStop {
+                position: 1.0
+                color: root.useAlbumColor ? root.effectiveAccentColor : "#000000"
+            }
+        }
+    }
+
+    Shape {
+        id: notchBackground
+        anchors.fill: parent
+        visible: !root.isFloatingIsland
+        antialiasing: true
+        preferredRendererType: Shape.CurveRenderer
+
+        // Bar bawah: cerminkan bentuk secara vertikal.
+        transform: Scale {
+            origin.x: root.width / 2
+            origin.y: root.height / 2
+            yScale: root.notchAtTop ? 1 : -1
+        }
+
+        ShapePath {
+            fillColor: "#000000"
+            strokeWidth: 0
+            startX: 0
+            startY: 0
+
+            // Tepi atas penuh (menyatu dengan bar).
+            PathLine { x: root.width; y: 0 }
+
+            // Bahu cekung kanan: (width, 0) -> (width - inset, drop).
+            PathCubic {
+                x: root.width - root.notchShoulderInset
+                y: root.notchShoulderDrop
+                control1X: root.width - root.notchShoulderInset * 0.552
+                control1Y: 0
+                control2X: root.width - root.notchShoulderInset
+                control2Y: root.notchShoulderDrop * 0.448
+            }
+
+            PathLine {
+                x: root.width - root.notchShoulderInset
+                y: root.height - root.notchBottomRadius
+            }
+
+            // Sudut bawah kanan.
+            PathCubic {
+                x: root.width - root.notchShoulderInset - root.notchBottomRadius
+                y: root.height
+                control1X: root.width - root.notchShoulderInset
+                control1Y: root.height - root.notchBottomRadius + root.notchBottomRadius * 0.552
+                control2X: root.width - root.notchShoulderInset - root.notchBottomRadius * 0.448
+                control2Y: root.height
+            }
+
+            PathLine {
+                x: root.notchShoulderInset + root.notchBottomRadius
+                y: root.height
+            }
+
+            // Sudut bawah kiri.
+            PathCubic {
+                x: root.notchShoulderInset
+                y: root.height - root.notchBottomRadius
+                control1X: root.notchShoulderInset + root.notchBottomRadius * 0.448
+                control1Y: root.height
+                control2X: root.notchShoulderInset
+                control2Y: root.height - root.notchBottomRadius + root.notchBottomRadius * 0.552
+            }
+
+            PathLine {
+                x: root.notchShoulderInset
+                y: root.notchShoulderDrop
+            }
+
+            // Bahu cekung kiri: (inset, drop) -> (0, 0).
+            PathCubic {
+                x: 0
+                y: 0
+                control1X: root.notchShoulderInset
+                control1Y: root.notchShoulderDrop * 0.448
+                control2X: root.notchShoulderInset * 0.552
+                control2Y: 0
             }
         }
     }
