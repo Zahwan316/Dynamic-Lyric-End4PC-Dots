@@ -14,6 +14,9 @@ Rectangle {
     property string placementMode: Config.options.bar.lyricsWidget?.mode ?? "notch"
     property bool useAlbumColor: Config.options.bar.lyricsWidget?.useAlbumColor ?? true
     readonly property bool isFloatingIsland: placementMode === "floating" || placementMode === "floating-island"
+    // Kedua mode memakai siluet notch: hitam, leher rata di tepi layar/bar,
+    // sudut bawah membulat. Floating island hanya digeser sedikit dari tepi atas.
+    readonly property bool notchAtTop: !Config.options.bar.bottom
 
     // --- Konfigurasi Tema, Posisi & Ukuran ---
     property color bgColor: "#000000"
@@ -24,10 +27,15 @@ Rectangle {
     property color lyricDimColor: Qt.rgba(1.0, 1.0, 1.0, 0.36)
     property color subTextColor: Qt.rgba(1.0, 1.0, 1.0, 0.72)
     property real maxCompactLyricWidth: 420
-    property int yOffset: isFloatingIsland ? 8 : 6
+    property int yOffset: 0
 
     readonly property real expandedWidth: 492
     readonly property real expandedHeight: 404
+
+    // Ukuran compact diambil saat ekspansi dimulai agar perubahan lirik tidak
+    // menggeser popup/expanded card.
+    property real morphBaseWidth: 96
+    property real morphBaseHeight: 38
 
     // --- Palet Warna Dinamis dari Cover Album ---
     property color albumAccentColor: "#262626"
@@ -341,14 +349,15 @@ Rectangle {
         if (!win || !win.contentItem)
             return
         const pos = root.mapToItem(win.contentItem, 0, 0)
+        const anchorW = (isExpanded || morphProgress > 0.01) ? morphBaseWidth : root.width
         const maxX = Math.max(8, win.width - expandedPopup.implicitWidth - 8)
-        const centeredX = Math.max(8, Math.min(maxX, pos.x + (root.width - expandedPopup.implicitWidth) * 0.5))
+        const centeredX = Math.max(8, Math.min(maxX, pos.x + (anchorW - expandedPopup.implicitWidth) * 0.5))
         cachedAnchorRect = Qt.rect(centeredX, pos.y, expandedPopup.implicitWidth, root.height)
     }
 
-    onXChanged: if (isExpanded || morphProgress > 0.01) updatePopupAnchor()
-    onWidthChanged: if (isExpanded || morphProgress > 0.01) updatePopupAnchor()
-    onYOffsetChanged: if (isExpanded || morphProgress > 0.01) updatePopupAnchor()
+    onXChanged: if (!isExpanded && morphProgress <= 0.01) updatePopupAnchor()
+    onWidthChanged: if (!isExpanded && morphProgress <= 0.01) updatePopupAnchor()
+    onYOffsetChanged: updatePopupAnchor()
 
     NumberAnimation {
         id: expandMorphAnim
@@ -373,6 +382,8 @@ Rectangle {
         expandMorphAnim.stop()
         collapseMorphAnim.stop()
         if (isExpanded) {
+            morphBaseWidth = root.width
+            morphBaseHeight = root.height
             updatePopupAnchor()
             expandMorphAnim.start()
             if (root.activeLyricIndex >= 0) {
@@ -451,7 +462,12 @@ Rectangle {
     Layout.preferredHeight: implicitHeight
     Layout.minimumWidth: implicitWidth
     Layout.minimumHeight: implicitHeight
-    radius: 24
+    // Siluet notch Mac: rata di tepi bar/layar, membulat di sisi dalam.
+    radius: 20
+    topLeftRadius: notchAtTop ? 0 : 20
+    topRightRadius: notchAtTop ? 0 : 20
+    bottomLeftRadius: notchAtTop ? 20 : 0
+    bottomRightRadius: notchAtTop ? 20 : 0
     border.width: 0
     border.color: "transparent"
     clip: true
@@ -459,12 +475,17 @@ Rectangle {
     gradient: Gradient {
         GradientStop { position: 0.0; color: "#000000" }
         GradientStop {
-            position: 0.55
+            position: 0.62
             color: root.useAlbumColor
-                ? Qt.tint("#070707", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.28))
+                ? Qt.tint("#050505", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.18))
                 : "#000000"
         }
-        GradientStop { position: 1.0; color: root.useAlbumColor ? root.effectiveAccentColor : "#000000" }
+        GradientStop {
+            position: 1.0
+            color: root.useAlbumColor
+                ? Qt.tint("#070707", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.42))
+                : "#000000"
+        }
     }
 
     Behavior on implicitWidth {
@@ -1151,7 +1172,107 @@ Rectangle {
     }
 
     // =========================================================================
-    // ENGINE TERJEMAHAN & ROMANISASI (ANTREAN BERTAHAP + DUAL API FALLBACK)
+    // HTTP helper ringan: timeout + status + stale-track guard dipakai bersama
+    // oleh sumber lirik dan penyedia terjemahan.
+    // =========================================================================
+    function httpRequest(url, trackSnapshot, callback, timeoutMs, headers) {
+        const xhr = new XMLHttpRequest()
+        let finished = false
+        const finish = result => {
+            if (finished) return
+            finished = true
+            xhr.onreadystatechange = null
+            xhr.onerror = null
+            xhr.ontimeout = null
+            const stale = Boolean(trackSnapshot) && root.currentTrackId !== trackSnapshot
+            result.stale = stale
+            callback(result)
+        }
+
+        xhr.timeout = timeoutMs || 8000
+        xhr.onreadystatechange = () => {
+            if (xhr.readyState !== XMLHttpRequest.DONE)
+                return
+            if (xhr.status !== 200) {
+                finish({ ok: false, error: "http-" + xhr.status })
+                return
+            }
+            finish({ ok: true, data: xhr.responseText })
+        }
+        xhr.onerror = () => finish({ ok: false, error: "network" })
+        xhr.ontimeout = () => {
+            try { xhr.abort() } catch (e) {}
+            finish({ ok: false, error: "timeout" })
+        }
+
+        try {
+            xhr.open("GET", url)
+            if (headers && typeof headers === "object") {
+                for (const key of Object.keys(headers))
+                    xhr.setRequestHeader(key, headers[key])
+            }
+            xhr.send()
+        } catch (e) {
+            finish({ ok: false, error: "request" })
+        }
+    }
+
+    function httpJson(url, trackSnapshot, callback, timeoutMs, headers) {
+        httpRequest(url, trackSnapshot, res => {
+            if (res.ok) {
+                try {
+                    res.data = JSON.parse(res.data)
+                } catch (e) {
+                    res.ok = false
+                    res.error = "parse"
+                }
+            }
+            callback(res)
+        }, timeoutMs, headers)
+    }
+
+    function decodeBase64Utf8(input) {
+        const text = String(input || "").replace(/\s/g, "")
+        if (text === "")
+            return ""
+        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
+        let out = ""
+        let i = 0
+        while (i < text.length) {
+            const e1 = chars.indexOf(text.charAt(i++))
+            const e2 = chars.indexOf(text.charAt(i++))
+            const e3 = chars.indexOf(text.charAt(i++))
+            const e4 = chars.indexOf(text.charAt(i++))
+            const bits = (e1 << 18) | (e2 << 12) | ((e3 < 0 ? 0 : e3) << 6) | (e4 < 0 ? 0 : e4)
+            out += String.fromCharCode((bits >> 16) & 0xff)
+            if (e3 !== 64 && e3 >= 0) out += String.fromCharCode((bits >> 8) & 0xff)
+            if (e4 !== 64 && e4 >= 0) out += String.fromCharCode(bits & 0xff)
+        }
+        try { return decodeURIComponent(escape(out)) } catch (e) { return out }
+    }
+
+    function vttToLrc(vtt) {
+        const lines = String(vtt || "").split(/\r?\n/)
+        const out = []
+        let pending = ""
+        for (let i = 0; i < lines.length; i++) {
+            const raw = lines[i]
+            const cue = raw.match(/(\d{2}):(\d{2})[.,](\d{2,3})/)
+            if (cue && raw.indexOf("-->") !== -1) {
+                pending = "[" + cue[1] + ":" + cue[2] + "." + cue[3].padEnd(3, "0").slice(0, 3) + "]"
+                continue
+            }
+            const body = raw.trim()
+            if (pending !== "" && body !== "" && !/^\d+$/.test(body) && body.toUpperCase().indexOf("WEBVTT") !== 0) {
+                out.push(pending + body)
+                pending = ""
+            }
+        }
+        return out.join("\n")
+    }
+
+    // =========================================================================
+    // ENGINE TERJEMAHAN & ROMANISASI (ANTREAN BERTAHAP + MULTI API FALLBACK)
     // =========================================================================
     Timer {
         id: queuePaceTimer
@@ -1266,93 +1387,123 @@ Rectangle {
         }
 
         root.isTranslatingNow = true
-        fetchSingleLineGoogleTranslate(line, trackSnapshot, function(success, romText, transText) {
-            if (success && transText !== "") {
-                commitLineTranslationResult(line, romText, transText, trackSnapshot)
-                root.isTranslatingNow = false
-                queuePaceTimer.start()
-            } else {
-                fetchSingleLineMyMemory(line, trackSnapshot, function(mmTrans) {
-                    commitLineTranslationResult(line, romText, mmTrans, trackSnapshot)
-                    root.isTranslatingNow = false
-                    queuePaceTimer.start()
-                })
-            }
+        translateLineWithFallback(line, trackSnapshot, function(success, romText, transText) {
+            root.isTranslatingNow = false
+            if (trackSnapshot && root.currentTrackId !== trackSnapshot)
+                return
+            // Walau semua provider gagal, romanisasi lokal tetap dipakai.
+            commitLineTranslationResult(line, romText, success ? transText : "", trackSnapshot)
+            queuePaceTimer.start()
         })
     }
 
-    function fetchSingleLineGoogleTranslate(line, trackSnapshot, callback) {
-        const xhr = new XMLHttpRequest()
-        const url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=id&dt=t&dt=rm&q=" + encodeURIComponent(line)
+    function translateLineWithFallback(line, trackSnapshot, done) {
+        const providers = [
+            (s, cb) => fetchSingleLineGoogleTranslate(line, s, cb),
+            (s, cb) => fetchSingleLineMyMemory(line, s, cb),
+            (s, cb) => fetchSingleLineCustomTranslation(line, s, cb)
+        ]
+        let idx = 0
+        let bestRom = ""
 
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState !== XMLHttpRequest.DONE)
+        const next = (rom, trans) => {
+            if (rom) bestRom = rom
+            if (trackSnapshot && root.currentTrackId !== trackSnapshot) {
+                done(false, bestRom, "")
                 return
-            if (trackSnapshot !== "" && root.currentTrackId !== trackSnapshot)
-                return
-
-            if (xhr.status === 200) {
-                try {
-                    const res = JSON.parse(xhr.responseText)
-                    const detectedLang = (res && res[2]) ? String(res[2]).toLowerCase() : ""
-                    let translated = ""
-                    let romanized = ""
-
-                    if (res && Array.isArray(res[0])) {
-                        for (let i = 0; i < res[0].length; i++) {
-                            const chunk = res[0][i]
-                            if (chunk && typeof chunk[0] === "string")
-                                translated += chunk[0]
-                            if (chunk && typeof chunk[3] === "string")
-                                romanized += chunk[3]
-                        }
-                    }
-
-                    const needRom = containsNonLatin(line)
-                    const plainRom = (needRom && romanized.trim() !== "") ? toPlainLatinAlphabet(romanized.trim()) : ""
-                    const finalRom = (plainRom !== "" && plainRom.toLowerCase() !== line.toLowerCase()) ? plainRom : ""
-
-                    const cleanTrans = translated.trim()
-                    const isSameIndo = detectedLang === "id" && normalizeCompare(cleanTrans) === normalizeCompare(line)
-                    const finalTrans = (!isSameIndo && cleanTrans !== "") ? cleanTrans : ""
-
-                    callback(true, finalRom, finalTrans)
-                    return
-                } catch (e) {}
             }
-            callback(false, "", "")
+            if (idx >= providers.length || trans !== "") {
+                done(trans !== "", bestRom, trans)
+                return
+            }
+            const provider = providers[idx++]
+            provider(trackSnapshot, (ok, pRom, pTrans) => next(pRom, pTrans))
         }
+        next("", "")
+    }
 
-        xhr.open("GET", url)
-        xhr.send()
+    function translateTargetLanguage() {
+        return Config.options.bar.lyricsWidget?.translation?.targetLanguage || "id"
+    }
+
+    function fetchSingleLineGoogleTranslate(line, trackSnapshot, callback) {
+        const tl = encodeURIComponent(translateTargetLanguage())
+        const url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=" + tl + "&dt=t&dt=rm&q=" + encodeURIComponent(line)
+
+        httpJson(url, trackSnapshot, res => {
+            if (!res.ok || res.stale) {
+                callback(false, "", "")
+                return
+            }
+            const data = res.data
+            const detectedLang = (data && data[2]) ? String(data[2]).toLowerCase() : ""
+            let translated = ""
+            let romanized = ""
+
+            if (data && Array.isArray(data[0])) {
+                for (let i = 0; i < data[0].length; i++) {
+                    const chunk = data[0][i]
+                    if (chunk && typeof chunk[0] === "string") translated += chunk[0]
+                    if (chunk && typeof chunk[3] === "string") romanized += chunk[3]
+                }
+            }
+
+            const needRom = containsNonLatin(line)
+            const plainRom = (needRom && romanized.trim() !== "") ? toPlainLatinAlphabet(romanized.trim()) : ""
+            const finalRom = (plainRom !== "" && plainRom.toLowerCase() !== line.toLowerCase()) ? plainRom : ""
+
+            const cleanTrans = translated.trim()
+            const isSameTarget = detectedLang === translateTargetLanguage() && normalizeCompare(cleanTrans) === normalizeCompare(line)
+            callback(true, finalRom, (!isSameTarget && cleanTrans !== "") ? cleanTrans : "")
+        }, 7000)
+    }
+
+    function guessSourceLanguage(line) {
+        if (/[\u3040-\u30ff]/.test(line)) return "ja"
+        if (/[\uac00-\ud7af]/.test(line)) return "ko"
+        if (/[\u4e00-\u9fff]/.test(line)) return "zh-CN"
+        if (/[\u0400-\u04ff]/.test(line)) return "ru"
+        return "en"
     }
 
     function fetchSingleLineMyMemory(line, trackSnapshot, callback) {
-        const xhr = new XMLHttpRequest()
-        const langPair = containsNonLatin(line) ? "ko|id" : "en|id"
-        const url = "https://api.mymemory.translated.net/get?q=" + encodeURIComponent(line) + "&langpair=" + langPair
+        const target = translateTargetLanguage()
+        const langPair = guessSourceLanguage(line) + "|" + target
+        const url = "https://api.mymemory.translated.net/get?q=" + encodeURIComponent(line) + "&langpair=" + encodeURIComponent(langPair)
 
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState !== XMLHttpRequest.DONE)
+        httpJson(url, trackSnapshot, res => {
+            if (!res.ok || res.stale) {
+                callback(false, "", "")
                 return
-            if (trackSnapshot !== "" && root.currentTrackId !== trackSnapshot)
-                return
-
-            if (xhr.status === 200) {
-                try {
-                    const res = JSON.parse(xhr.responseText)
-                    const trans = res && res.responseData ? String(res.responseData.translatedText || "").trim() : ""
-                    if (trans !== "" && trans.toUpperCase().indexOf("MYMEMORY WARNING") === -1) {
-                        callback(trans)
-                        return
-                    }
-                } catch (e) {}
             }
-            callback("")
-        }
+            const data = res.data
+            let trans = data && data.responseData ? String(data.responseData.translatedText || "").trim() : ""
+            if (trans.toUpperCase().indexOf("MYMEMORY WARNING") !== -1)
+                trans = ""
+            callback(trans !== "", "", trans)
+        }, 7000)
+    }
 
-        xhr.open("GET", url)
-        xhr.send()
+    function fetchSingleLineCustomTranslation(line, trackSnapshot, callback) {
+        const endpoint = Config.options.bar.lyricsWidget?.translation?.customEndpoint || ""
+        if (endpoint.trim() === "") {
+            callback(false, "", "")
+            return
+        }
+        const sep = endpoint.indexOf("?") === -1 ? "?" : "&"
+        const url = endpoint + sep + "q=" + encodeURIComponent(line) + "&target=" + encodeURIComponent(translateTargetLanguage())
+        httpRequest(url, trackSnapshot, res => {
+            if (!res.ok || res.stale) {
+                callback(false, "", "")
+                return
+            }
+            let trans = String(res.data || "").trim()
+            try {
+                const data = JSON.parse(res.data)
+                trans = String(data.translatedText || data.translation || data.text || "").trim()
+            } catch (e) {}
+            callback(trans !== "", "", trans)
+        }, 7000)
     }
 
     function applyEntryToActiveSlot(entry) {
@@ -1368,97 +1519,145 @@ Rectangle {
     }
 
     // =========================================================================
-    // SUMBER EKSTERNAL LIRIK (1. NetEase YRC/LRC, 2. LRCLIB ELRC/LRC)
+    // SUMBER EKSTERNAL LIRIK — BERANTAI DENGAN FALLBACK
     // =========================================================================
+    readonly property var lyricProviderMap: ({
+        lrclib: ctx => fetchLrclibLyrics(ctx, ctx.done),
+        netease: ctx => fetchNetEaseLyrics(ctx, ctx.done),
+        kugou: ctx => fetchKugouLyrics(ctx, ctx.done),
+        musixmatch: ctx => fetchMusixmatchLyrics(ctx, ctx.done),
+        subsonic: ctx => fetchSubsonicLyrics(ctx, ctx.done),
+        jellyfin: ctx => fetchJellyfinLyrics(ctx, ctx.done),
+        applemusic: ctx => fetchAppleMusicLyrics(ctx, ctx.done),
+        youtubemusic: ctx => fetchYouTubeMusicLyrics(ctx, ctx.done)
+    })
+
     function fetchExternalLyrics(title, artist, album, durationSec) {
         if (!title)
             return
 
-        const trackSnapshot = root.currentTrackId
         root.lrcSourcePriority = 0
-
-        fetchNetEaseLyrics(title, artist, durationSec, trackSnapshot)
-        fetchLrclibLyrics(title, artist, album, durationSec, trackSnapshot)
-    }
-
-    function fetchNetEaseLyrics(title, artist, durationSec, trackSnapshot) {
-        const xhr = new XMLHttpRequest()
-        const query = encodeURIComponent((artist ? artist + " " : "") + title)
-        const searchUrl = "https://music.163.com/api/search/get/web?s=" + query + "&type=1&limit=8"
-
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState !== XMLHttpRequest.DONE || root.currentTrackId !== trackSnapshot)
-                return
-            if (xhr.status !== 200)
-                return
-
-            try {
-                const res = JSON.parse(xhr.responseText)
-                const songs = res && res.result ? res.result.songs : null
-                if (!Array.isArray(songs) || songs.length === 0)
-                    return
-
-                let chosenId = -1
-                if (durationSec > 0) {
-                    let bestDiff = 999999
-                    for (let i = 0; i < songs.length; i++) {
-                        const songDurSec = (songs[i].duration || 0) / 1000.0
-                        if (songDurSec > 0) {
-                            const diff = Math.abs(songDurSec - durationSec)
-                            if (diff < bestDiff) {
-                                bestDiff = diff
-                                chosenId = songs[i].id
-                            }
-                        }
-                    }
-                    if (bestDiff > 9.0)
-                        return
-                } else {
-                    chosenId = songs[0].id
-                }
-
-                if (chosenId !== -1)
-                    fetchNetEaseSongLyricById(chosenId, trackSnapshot)
-            } catch (e) {}
+        const trackSnapshot = root.currentTrackId
+        const order = Config.options.bar.lyricsWidget?.sourceOrder || []
+        const ctx = {
+            title: title,
+            artist: artist || "",
+            album: album || "",
+            durationSec: durationSec || 0,
+            trackSnapshot: trackSnapshot,
+            done: null
         }
-
-        xhr.open("GET", searchUrl)
-        xhr.send()
+        root.lyricFetchContext = ctx
+        tryLyricProvider(0, order, ctx)
     }
 
-    function fetchNetEaseSongLyricById(songId, trackSnapshot) {
-        if (!songId)
+    property var lyricFetchContext: null
+
+    function tryLyricProvider(index, order, ctx) {
+        if (!ctx || ctx.trackSnapshot && root.currentTrackId !== ctx.trackSnapshot)
+            return
+        if (index >= order.length)
             return
 
-        const xhr = new XMLHttpRequest()
-        const lyricUrl = "https://music.163.com/api/song/lyric?id=" + songId + "&lv=1&kv=1&tv=-1&yv=1"
-
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState !== XMLHttpRequest.DONE || root.currentTrackId !== trackSnapshot)
-                return
-            if (xhr.status !== 200)
-                return
-
-            try {
-                const data = JSON.parse(xhr.responseText)
-                if (data && data.yrc && data.yrc.lyric) {
-                    const yrcParsed = parseNetEaseYrc(data.yrc.lyric)
-                    if (yrcParsed.length > 0 && root.lrcSourcePriority < 2) {
-                        applyParsedLyricsToModel(yrcParsed, 2, trackSnapshot)
-                        return
-                    }
-                }
-                if (data && data.lrc && data.lrc.lyric && root.lrcSourcePriority < 1) {
-                    const lrcParsed = parseLrcToEntries(data.lrc.lyric)
-                    if (lrcParsed.length > 0) {
-                        applyParsedLyricsToModel(lrcParsed, 1, trackSnapshot)
-                    }
-                }
-            } catch (e) {}
+        const name = String(order[index] || "").toLowerCase()
+        const provider = root.lyricProviderMap[name]
+        if (!provider) {
+            tryLyricProvider(index + 1, order, ctx)
+            return
         }
 
-        xhr.open("GET", lyricUrl)
-        xhr.send()
+        ctx.done = (ok, priority) => {
+            if (!ctx || ctx.trackSnapshot && root.currentTrackId !== ctx.trackSnapshot)
+                return
+            if (ok && priority > root.lrcSourcePriority)
+                return
+            tryLyricProvider(index + 1, order, ctx)
+        }
+        provider(ctx)
+    }
+
+    function commitLyricResult(entries, priority, ctx, done) {
+        if (!entries || entries.length === 0 || !ctx || ctx.trackSnapshot && root.currentTrackId !== ctx.trackSnapshot) {
+            if (done) done(false, priority)
+            return false
+        }
+        if (priority <= root.lrcSourcePriority) {
+            if (done) done(false, priority)
+            return false
+        }
+        applyParsedLyricsToModel(entries, priority, ctx.trackSnapshot)
+        if (done) done(true, priority)
+        return true
+    }
+
+    function queryText(s, extra) {
+        return (String(s || "") + " " + String(extra || "")).trim()
+    }
+
+    function fetchNetEaseLyrics(ctx, done) {
+        const query = encodeURIComponent(queryText(ctx.artist, ctx.title))
+        const searchUrl = "https://music.163.com/api/search/get/web?s=" + query + "&type=1&limit=8"
+
+        httpJson(searchUrl, ctx.trackSnapshot, res => {
+            if (!res.ok || res.stale) {
+                done(false, 0)
+                return
+            }
+            const songs = res.data && res.data.result ? res.data.result.songs : null
+            if (!Array.isArray(songs) || songs.length === 0) {
+                done(false, 0)
+                return
+            }
+
+            let chosenId = -1
+            if (ctx.durationSec > 0) {
+                let bestDiff = 999999
+                for (let i = 0; i < songs.length; i++) {
+                    const songDurSec = (songs[i].duration || 0) / 1000.0
+                    if (songDurSec > 0) {
+                        const diff = Math.abs(songDurSec - ctx.durationSec)
+                        if (diff < bestDiff) {
+                            bestDiff = diff
+                            chosenId = songs[i].id
+                        }
+                    }
+                }
+                if (bestDiff > 9.0) chosenId = -1
+            } else {
+                chosenId = songs[0].id
+            }
+
+            if (chosenId === -1) {
+                done(false, 0)
+                return
+            }
+            fetchNetEaseSongLyricById(chosenId, ctx, done)
+        })
+    }
+
+    function fetchNetEaseSongLyricById(songId, ctx, done) {
+        if (!songId) {
+            done(false, 0)
+            return
+        }
+        const url = "https://music.163.com/api/song/lyric?id=" + songId + "&lv=1&kv=1&tv=-1&yv=1"
+        httpJson(url, ctx.trackSnapshot, res => {
+            if (!res.ok || res.stale) {
+                done(false, 0)
+                return
+            }
+            const data = res.data
+            if (data && data.yrc && data.yrc.lyric) {
+                const yrcParsed = parseNetEaseYrc(data.yrc.lyric)
+                if (commitLyricResult(yrcParsed, 2, ctx, done)) return
+            }
+            if (data && data.lrc && data.lrc.lyric) {
+                const lrcParsed = parseLrcToEntries(data.lrc.lyric)
+                commitLyricResult(lrcParsed, 1, ctx, done)
+                return
+            }
+            done(false, 0)
+        })
     }
 
     function enrichEntriesWithInstrumentalBreaks(sortedEntries) {
@@ -1635,80 +1834,315 @@ Rectangle {
         return enrichEntriesWithInstrumentalBreaks(parsed)
     }
 
-    function fetchLrclibLyrics(title, artist, album, durationSec, trackSnapshot) {
-        const xhr = new XMLHttpRequest()
-        let url = "https://lrclib.net/api/get?track_name=" + encodeURIComponent(title)
-        if (artist)
-            url += "&artist_name=" + encodeURIComponent(artist)
-        if (album)
-            url += "&album_name=" + encodeURIComponent(album)
-        if (durationSec > 0)
-            url += "&duration=" + Math.round(durationSec)
+    function fetchLrclibLyrics(ctx, done) {
+        let url = "https://lrclib.net/api/get?track_name=" + encodeURIComponent(ctx.title)
+        if (ctx.artist) url += "&artist_name=" + encodeURIComponent(ctx.artist)
+        if (ctx.album) url += "&album_name=" + encodeURIComponent(ctx.album)
+        if (ctx.durationSec > 0) url += "&duration=" + Math.round(ctx.durationSec)
 
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState !== XMLHttpRequest.DONE || root.currentTrackId !== trackSnapshot)
-                return
-
-            if (xhr.status === 200) {
-                try {
-                    const res = JSON.parse(xhr.responseText)
-                    if (res && res.syncedLyrics) {
-                        const entries = parseLrcToEntries(res.syncedLyrics)
-                        const hasWords = entries.length > 0 && entries[0].wordTimingsJson !== ""
-                        const prio = hasWords ? 2 : 1
-                        if (entries.length > 0 && root.lrcSourcePriority < prio) {
-                            applyParsedLyricsToModel(entries, prio, trackSnapshot)
-                        }
-                        return
-                    }
-                } catch (e) {}
+        httpJson(url, ctx.trackSnapshot, res => {
+            if (res.stale) return
+            if (res.ok && res.data && res.data.syncedLyrics) {
+                const entries = parseLrcToEntries(res.data.syncedLyrics)
+                const hasWords = entries.length > 0 && entries[0].wordTimingsJson !== ""
+                if (commitLyricResult(entries, hasWords ? 2 : 1, ctx, done)) return
             }
-            searchLrclibLyrics(title, artist, durationSec, trackSnapshot)
-        }
-        xhr.open("GET", url)
-        xhr.send()
+            searchLrclibLyrics(ctx, done)
+        })
     }
 
-    function searchLrclibLyrics(title, artist, durationSec, trackSnapshot) {
-        const xhr = new XMLHttpRequest()
-        const cleanTitle = (title || "").replace(/\s*[\[(](official|lyrics|audio|video|mv|hd|4k)[^\])]*[\])]/gi, "").trim()
-        const q = encodeURIComponent((artist ? artist + " " : "") + cleanTitle)
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState !== XMLHttpRequest.DONE || root.currentTrackId !== trackSnapshot)
+    function searchLrclibLyrics(ctx, done) {
+        const cleanTitle = ctx.title.replace(/\s*[\[(](official|lyrics|audio|video|mv|hd|4k)[^\])]*[\])]/gi, "").trim()
+        const q = encodeURIComponent(queryText(ctx.artist, cleanTitle))
+        httpJson("https://lrclib.net/api/search?q=" + q, ctx.trackSnapshot, res => {
+            if (!res.ok || res.stale) {
+                done(false, 0)
                 return
-            if (xhr.status === 200) {
-                try {
-                    const list = JSON.parse(xhr.responseText)
-                    if (Array.isArray(list)) {
-                        let bestItem = null
-                        let bestDiff = 999999
-                        for (let i = 0; i < list.length; i++) {
-                            if (!list[i].syncedLyrics)
-                                continue
-                            if (durationSec > 0 && list[i].duration > 0) {
-                                const diff = Math.abs(list[i].duration - durationSec)
-                                if (diff < bestDiff) {
-                                    bestDiff = diff
-                                    bestItem = list[i]
-                                }
-                            } else if (!bestItem) {
-                                bestItem = list[i]
-                            }
-                        }
-                        if (bestItem && (durationSec <= 0 || bestDiff <= 9.0)) {
-                            const entries = parseLrcToEntries(bestItem.syncedLyrics)
-                            const hasWords = entries.length > 0 && entries[0].wordTimingsJson !== ""
-                            const prio = hasWords ? 2 : 1
-                            if (entries.length > 0 && root.lrcSourcePriority < prio) {
-                                applyParsedLyricsToModel(entries, prio, trackSnapshot)
-                            }
-                        }
-                    }
-                } catch (e) {}
             }
+            const list = res.data
+            if (!Array.isArray(list)) {
+                done(false, 0)
+                return
+            }
+            let bestItem = null
+            let bestDiff = 999999
+            for (let i = 0; i < list.length; i++) {
+                if (!list[i].syncedLyrics) continue
+                if (ctx.durationSec > 0 && list[i].duration > 0) {
+                    const diff = Math.abs(list[i].duration - ctx.durationSec)
+                    if (diff < bestDiff) {
+                        bestDiff = diff
+                        bestItem = list[i]
+                    }
+                } else if (!bestItem) {
+                    bestItem = list[i]
+                }
+            }
+            if (!bestItem || (ctx.durationSec > 0 && bestDiff > 9.0)) {
+                done(false, 0)
+                return
+            }
+            const entries = parseLrcToEntries(bestItem.syncedLyrics)
+            const hasWords = entries.length > 0 && entries[0].wordTimingsJson !== ""
+            commitLyricResult(entries, hasWords ? 2 : 1, ctx, done)
+        })
+    }
+
+    // --- Kugou (endpoint publik, tidak butuh login) ---
+    function fetchKugouLyrics(ctx, done) {
+        const keyword = encodeURIComponent(queryText(ctx.artist, ctx.title))
+        const durationMs = Math.max(0, Math.round(ctx.durationSec * 1000))
+        const searchUrl = "https://lyrics.kugou.com/search?ver=1&man=yes&client=pc&keyword=" + keyword + "&duration=" + durationMs
+
+        httpJson(searchUrl, ctx.trackSnapshot, res => {
+            if (!res.ok || res.stale || !res.data || !Array.isArray(res.data.candidates) || res.data.candidates.length === 0) {
+                done(false, 0)
+                return
+            }
+            let best = res.data.candidates[0]
+            let bestDiff = 999999
+            for (const cand of res.data.candidates) {
+                const diff = Math.abs(Number(cand.duration || 0) - durationMs)
+                if (diff < bestDiff) {
+                    bestDiff = diff
+                    best = cand
+                }
+            }
+            if (!best.id || !best.accesskey) {
+                done(false, 0)
+                return
+            }
+            const dl = "https://lyrics.kugou.com/download?ver=1&client=pc&id=" + encodeURIComponent(best.id)
+                + "&accesskey=" + encodeURIComponent(best.accesskey)
+                + "&format=lrc&content=" + encodeURIComponent(best.contentid || "")
+                + "&hash=" + encodeURIComponent(best.hash || "")
+            httpJson(dl, ctx.trackSnapshot, dlRes => {
+                if (!dlRes.ok || dlRes.stale || !dlRes.data || !dlRes.data.content) {
+                    done(false, 0)
+                    return
+                }
+                const lrc = decodeBase64Utf8(dlRes.data.content)
+                const entries = parseLrcToEntries(lrc)
+                const hasWords = entries.length > 0 && entries[0].wordTimingsJson !== ""
+                commitLyricResult(entries, hasWords ? 2 : 1, ctx, done)
+            })
+        })
+    }
+
+    // --- Musixmatch (token web publik, bisa ditimpa di config) ---
+    function fetchMusixmatchLyrics(ctx, done) {
+        const creds = Config.options.bar.lyricsWidget?.credentials || ({})
+        const token = creds.musixmatchToken || "20052115310630bcb171d09f9e09f491"
+        const base = "https://www.musixmatch.com/ws/1.1/"
+        const searchUrl = base + "track.search?q_track=" + encodeURIComponent(ctx.title)
+            + "&q_artist=" + encodeURIComponent(ctx.artist)
+            + "&page_size=3&s_track_rating=desc&quorum_factor=1&apikey=" + encodeURIComponent(token)
+
+        httpJson(searchUrl, ctx.trackSnapshot, res => {
+            if (!res.ok || res.stale || !res.data) {
+                done(false, 0)
+                return
+            }
+            let tracks = []
+            try { tracks = res.data.message.body.track_list || [] } catch (e) {}
+            if (!Array.isArray(tracks) || tracks.length === 0) {
+                done(false, 0)
+                return
+            }
+            const trackId = tracks[0].track.track_id
+            if (!trackId) {
+                done(false, 0)
+                return
+            }
+            const subUrl = base + "track.subtitles.get?track_id=" + encodeURIComponent(trackId)
+                + "&subtitle_format=lrc&apikey=" + encodeURIComponent(token)
+            httpJson(subUrl, ctx.trackSnapshot, subRes => {
+                if (!subRes.ok || subRes.stale || !subRes.data) {
+                    done(false, 0)
+                    return
+                }
+                try {
+                    const body = subRes.data.message.body.subtitle
+                    const raw = body && body.subtitle_body ? decodeBase64Utf8(body.subtitle_body) : ""
+                    if (raw.trim() === "") {
+                        done(false, 0)
+                        return
+                    }
+                    const entries = parseLrcToEntries(raw)
+                    const hasWords = entries.length > 0 && entries[0].wordTimingsJson !== ""
+                    commitLyricResult(entries, hasWords ? 2 : 1, ctx, done)
+                } catch (e) {
+                    done(false, 0)
+                }
+            })
+        })
+    }
+
+    // --- Subsonic (butuh URL/user/password di config) ---
+    function fetchSubsonicLyrics(ctx, done) {
+        const creds = Config.options.bar.lyricsWidget?.credentials || ({})
+        if (!creds.subsonicUrl || !creds.subsonicUser || !creds.subsonicPassword) {
+            done(false, 0)
+            return
         }
-        xhr.open("GET", "https://lrclib.net/api/search?q=" + q)
-        xhr.send()
+        const base = String(creds.subsonicUrl).replace(/\/+$/, "")
+        const url = base + "/rest/getLyrics.view"
+            + "?u=" + encodeURIComponent(creds.subsonicUser)
+            + "&p=" + encodeURIComponent(creds.subsonicPassword)
+            + "&v=1.16.1&c=quickshell&f=json"
+            + "&artist=" + encodeURIComponent(ctx.artist)
+            + "&title=" + encodeURIComponent(ctx.title)
+
+        httpJson(url, ctx.trackSnapshot, res => {
+            if (!res.ok || res.stale || !res.data) {
+                done(false, 0)
+                return
+            }
+            const data = res.data["subsonic-response"] || {}
+            const text = data.lyrics && data.lyrics.lyricsText ? String(data.lyrics.lyricsText) : ""
+            if (text.indexOf("[") === -1) {
+                done(false, 0)
+                return
+            }
+            const entries = parseLrcToEntries(text)
+            const hasWords = entries.length > 0 && entries[0].wordTimingsJson !== ""
+            commitLyricResult(entries, hasWords ? 2 : 1, ctx, done)
+        })
+    }
+
+    // --- Jellyfin (butuh URL + token di config) ---
+    function fetchJellyfinLyrics(ctx, done) {
+        const creds = Config.options.bar.lyricsWidget?.credentials || ({})
+        if (!creds.jellyfinUrl || !creds.jellyfinToken) {
+            done(false, 0)
+            return
+        }
+        const base = String(creds.jellyfinUrl).replace(/\/+$/, "")
+        const q = encodeURIComponent(queryText(ctx.artist, ctx.title))
+        const searchUrl = base + "/Items?SearchTerms=" + q + "&IncludeItemTypes=Audio&Limit=5&api_key=" + encodeURIComponent(creds.jellyfinToken)
+
+        httpJson(searchUrl, ctx.trackSnapshot, res => {
+            if (!res.ok || res.stale || !res.data || !res.data.Items || res.data.Items.length === 0) {
+                done(false, 0)
+                return
+            }
+            const item = res.data.Items[0]
+            const lyricUrl = base + "/Items/" + encodeURIComponent(item.Id) + "/Lyrics?api_key=" + encodeURIComponent(creds.jellyfinToken)
+            httpRequest(lyricUrl, ctx.trackSnapshot, lyricRes => {
+                if (!lyricRes.ok || lyricRes.stale) {
+                    done(false, 0)
+                    return
+                }
+                let text = String(lyricRes.data || "")
+                if (text.trim().indexOf("{") === 0) {
+                    try {
+                        const obj = JSON.parse(text)
+                        text = String(obj.Lyrics || obj.lyrics || "")
+                    } catch (e) {}
+                }
+                if (text.indexOf("[") === -1) {
+                    done(false, 0)
+                    return
+                }
+                const entries = parseLrcToEntries(text)
+                const hasWords = entries.length > 0 && entries[0].wordTimingsJson !== ""
+                commitLyricResult(entries, hasWords ? 2 : 1, ctx, done)
+            })
+        })
+    }
+
+    // --- Apple Music (butuh developer token di config) ---
+    function fetchAppleMusicLyrics(ctx, done) {
+        const creds = Config.options.bar.lyricsWidget?.credentials || ({})
+        if (!creds.appleMusicToken) {
+            done(false, 0)
+            return
+        }
+        const q = encodeURIComponent(queryText(ctx.artist, ctx.title))
+        httpJson("https://itunes.apple.com/search?term=" + q + "&entity=song&limit=3", ctx.trackSnapshot, res => {
+            if (!res.ok || res.stale || !res.data || !res.data.results || res.data.results.length === 0) {
+                done(false, 0)
+                return
+            }
+            const songId = res.data.results[0].trackId
+            if (!songId) {
+                done(false, 0)
+                return
+            }
+            const headers = { Authorization: "Bearer " + creds.appleMusicToken }
+            const url = "https://api.music.apple.com/v1/catalog/us/songs/" + encodeURIComponent(songId) + "/lyrics"
+            httpJson(url, ctx.trackSnapshot, lyricRes => {
+                if (!lyricRes.ok || lyricRes.stale || !lyricRes.data) {
+                    done(false, 0)
+                    return
+                }
+                try {
+                    let raw = lyricRes.data.attributes && lyricRes.data.attributes.lyrics
+                    if (Array.isArray(raw)) raw = raw.map(x => x.text || "").join("\n")
+                    else if (raw && typeof raw === "object") raw = raw.text || ""
+                    raw = String(raw || "")
+                    if (raw.indexOf("[") === -1) {
+                        done(false, 0)
+                        return
+                    }
+                    const entries = parseLrcToEntries(raw)
+                    const hasWords = entries.length > 0 && entries[0].wordTimingsJson !== ""
+                    commitLyricResult(entries, hasWords ? 2 : 1, ctx, done)
+                } catch (e) {
+                    done(false, 0)
+                }
+            }, 8000, headers)
+        })
+    }
+
+    // --- YouTube Music lewat Invidious/Piped (butuh base URL di config) ---
+    function fetchYouTubeMusicLyrics(ctx, done) {
+        const creds = Config.options.bar.lyricsWidget?.credentials || ({})
+        if (!creds.youTubeMusicApi) {
+            done(false, 0)
+            return
+        }
+        const base = String(creds.youTubeMusicApi).replace(/\/+$/, "")
+        const q = encodeURIComponent(queryText(ctx.artist, ctx.title))
+        httpJson(base + "/api/v1/search?q=" + q + "&type=video&sort_by=relevance", ctx.trackSnapshot, res => {
+            if (!res.ok || res.stale || !Array.isArray(res.data) || res.data.length === 0) {
+                done(false, 0)
+                return
+            }
+            const videoId = res.data[0].videoId
+            if (!videoId) {
+                done(false, 0)
+                return
+            }
+            httpJson(base + "/api/v1/captions/" + encodeURIComponent(videoId), ctx.trackSnapshot, capRes => {
+                if (!capRes.ok || capRes.stale || !Array.isArray(capRes.data) || capRes.data.length === 0) {
+                    done(false, 0)
+                    return
+                }
+                let cap = capRes.data[0]
+                for (const c of capRes.data) {
+                    const label = String(c.label || c.languageCode || "").toLowerCase()
+                    if (label.indexOf("lyric") !== -1) { cap = c; break }
+                }
+                if (!cap || !cap.url) {
+                    done(false, 0)
+                    return
+                }
+                const captionUrl = String(cap.url).indexOf("http") === 0 ? cap.url : base + cap.url
+                httpRequest(captionUrl, ctx.trackSnapshot, vttRes => {
+                    if (!vttRes.ok || vttRes.stale) {
+                        done(false, 0)
+                        return
+                    }
+                    const entries = parseLrcToEntries(vttToLrc(vttRes.data))
+                    if (entries.length === 0) {
+                        done(false, 0)
+                        return
+                    }
+                    commitLyricResult(entries, 1, ctx, done)
+                })
+            })
+        })
     }
 
     function parseTimestampToken(minStr, secStr, msStr) {
@@ -2383,8 +2817,10 @@ Rectangle {
             ClippingRectangle {
                 Layout.preferredWidth: 28
                 Layout.preferredHeight: 28
-                radius: 6
+                radius: 8
                 color: "#141414"
+                border.width: 1
+                border.color: Qt.rgba(1, 1, 1, 0.08)
                 scale: root.isPlaying ? 1.0 : 0.9
 
                 Behavior on scale {
@@ -2523,9 +2959,10 @@ Rectangle {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.top: parent.top
 
-                // Morphing dimensi langsung dari ukuran kotak compact ke ukuran expanded
-                width: Math.max(root.width, root.width + ((root.expandedWidth - root.width) * root.morphProgress))
-                height: Math.max(root.height, root.height + ((root.expandedHeight - root.height) * root.morphProgress))
+                // Morphing memakai ukuran compact yang dibekukan saat ekspansi,
+                // dan progress di-clamp agar OutBack tidak membuat kartu bergetar.
+                width: morphBaseWidth + ((root.expandedWidth - morphBaseWidth) * Math.max(0.0, Math.min(1.0, root.morphProgress)))
+                height: morphBaseHeight + ((root.expandedHeight - morphBaseHeight) * Math.max(0.0, Math.min(1.0, root.morphProgress)))
                 radius: 12 + (14 * Math.max(0.0, Math.min(1.0, root.morphProgress)))
                 border.width: 0
                 border.color: "transparent"
@@ -3049,9 +3486,21 @@ Rectangle {
                             currentIndex: root.activeLyricIndex
                             preferredHighlightBegin: 0
                             preferredHighlightEnd: height * 0.42
-                            highlightRangeMode: ListView.StrictlyEnforceRange
-                            highlightMoveDuration: 420
+                            highlightRangeMode: ListView.NoHighlightRange
+                            highlightMoveDuration: 240
                             highlightMoveVelocity: -1
+
+                            // Hanya scroll saat baris aktif benar-benar keluar dari
+                            // area nyaman. Tidak menggeser daftar tiap ganti lirik.
+                            onCurrentIndexChanged: {
+                                if (!root.isExpanded) return
+                                const item = fullLyricsView.itemAtIndex(currentIndex)
+                                if (!item) return
+                                const top = item.y - fullLyricsView.contentY
+                                const bottom = top + item.height
+                                if (top < 24 || bottom > fullLyricsView.height - 24)
+                                    fullLyricsView.positionViewAtIndex(currentIndex, ListView.Center)
+                            }
 
                             delegate: Item {
                                 id: rowDelegate
@@ -3070,22 +3519,14 @@ Rectangle {
                                 width: fullLyricsView.width
                                 height: (isInstrumental ? instrumentalDelegateRow.implicitHeight : lyricRowColumn.implicitHeight) + 2
 
-                                layer.enabled: !isCurrent
-                                layer.effect: MultiEffect {
-                                    blurEnabled: true
-                                    blur: 0.46
-                                    blurMax: 14
-                                    brightness: -0.22
-                                }
+                                // Layer blur dulu menyala/mati mendadak tiap lirik
+                                // dan terasa seperti shake. Sekarang hanya opacity.
+                                layer.enabled: false
 
-                                opacity: isCurrent ? 1.0 : 0.46
-                                scale: isCurrent ? 1.0 : 0.965
-                                transformOrigin: Item.Left
+                                opacity: isCurrent ? 1.0 : 0.48
+                                scale: 1.0
 
                                 Behavior on opacity {
-                                    NumberAnimation { duration: 360; easing.type: Easing.InOutCubic }
-                                }
-                                Behavior on scale {
                                     NumberAnimation { duration: 360; easing.type: Easing.InOutCubic }
                                 }
 
@@ -3129,7 +3570,7 @@ Rectangle {
                                         wrapMode: Text.WordWrap
                                         horizontalAlignment: Text.AlignLeft
                                         lineHeight: 1.15
-                                        font.pixelSize: rowDelegate.isCurrent ? 17 : 16
+                                        font.pixelSize: 17
                                         font.weight: Font.Bold
                                         text: rowDelegate.isCurrent
                                             ? root.buildRichKaraokeText(rowDelegate.rawText, root.karaokeProgress, "#ffffff", "#636262")
@@ -3144,9 +3585,7 @@ Rectangle {
                                         wrapMode: Text.WordWrap
                                         horizontalAlignment: Text.AlignLeft
                                         lineHeight: 1.15
-                                        font.pixelSize: rowDelegate.isCurrent
-                                            ? (rowDelegate.showFirstRaw ? 13 : 17)
-                                            : (rowDelegate.showFirstRaw ? 12 : 15)
+                                        font.pixelSize: rowDelegate.showFirstRaw ? 13 : 17
                                         font.weight: Font.DemiBold
                                         text: {
                                             const activeHex = root.effectiveSliderColor.toString()
@@ -3166,7 +3605,7 @@ Rectangle {
                                         horizontalAlignment: Text.AlignLeft
                                         lineHeight: 1.2
                                         color: rowDelegate.isCurrent ? Qt.rgba(1, 1, 1, 0.85) : Qt.rgba(1, 1, 1, 0.62)
-                                        font.pixelSize: rowDelegate.showFirstRaw ? 12 : (rowDelegate.isCurrent ? 15 : 14)
+                                        font.pixelSize: rowDelegate.showFirstRaw ? 12 : 15
                                     }
                                 }
 

@@ -682,6 +682,29 @@ Singleton {
                     property bool enable: false
                     property string mode: "notch" // "notch" | "floating"
                     property bool useAlbumColor: true
+
+                    // Urutan sumber lirik. Sumber gagal/timeout otomatis dilewati.
+                    property list<string> sourceOrder: [
+                        "lrclib", "netease", "kugou", "musixmatch",
+                        "subsonic", "jellyfin", "applemusic", "youtubemusic"
+                    ]
+
+                    property JsonObject translation: JsonObject {
+                        property string targetLanguage: "id"
+                        property string customEndpoint: "" // opsional: ?q=...&target=...
+                    }
+
+                    // Kredensial opsional. Kosongkan untuk melewati sumber terkait.
+                    property JsonObject credentials: JsonObject {
+                        property string musixmatchToken: "20052115310630bcb171d09f9e09f491"
+                        property string subsonicUrl: ""
+                        property string subsonicUser: ""
+                        property string subsonicPassword: ""
+                        property string jellyfinUrl: ""
+                        property string jellyfinToken: ""
+                        property string appleMusicToken: ""
+                        property string youTubeMusicApi: "" // base URL Invidious/Piped
+                    }
                 }
             }
 

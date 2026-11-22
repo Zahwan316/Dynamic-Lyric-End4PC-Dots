@@ -53,8 +53,9 @@ Scope {
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.top: !Config.options.bar.bottom ? parent.top : undefined
                     anchors.bottom: Config.options.bar.bottom ? parent.bottom : undefined
-                    anchors.topMargin: !Config.options.bar.bottom ? Appearance.sizes.barHeight + 8 : 0
-                    anchors.bottomMargin: Config.options.bar.bottom ? Appearance.sizes.barHeight + 8 : 0
+                    // Tetap dekat tepi layar (tidak digeser sejajar bar penuh).
+                    anchors.topMargin: !Config.options.bar.bottom ? 8 : 0
+                    anchors.bottomMargin: Config.options.bar.bottom ? 8 : 0
 
                     LyricsWidget {
                         id: lyrics
