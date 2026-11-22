@@ -44,6 +44,14 @@ QtObject {
         ];
     }
 
+    function lyricTextAlignmentOptions() {
+        return [
+            { displayName: Translation.tr("Left"),   icon: "format_align_left",   value: "left" },
+            { displayName: Translation.tr("Center"), icon: "format_align_center", value: "center" },
+            { displayName: Translation.tr("Right"),  icon: "format_align_right",  value: "right" }
+        ];
+    }
+
     function lyricAlbumColorStyleOptions() {
         return [
             { displayName: Translation.tr("Gradient color"), icon: "gradient", value: "gradient" },
@@ -166,6 +174,7 @@ QtObject {
         "bar:Use album cover color": { type: "switch", get: () => Config.options.bar.lyricsWidget?.useAlbumColor ?? true, set: v => { Config.options.bar.lyricsWidget.useAlbumColor = v; } },
         "bar:Album color style": { type: "select", get: () => Config.options.bar.lyricsWidget?.albumColorStyle ?? "gradient", set: v => { Config.options.bar.lyricsWidget.albumColorStyle = v; }, options: lyricAlbumColorStyleOptions() },
         "bar:Enable karaoke": { type: "switch", get: () => Config.options.bar.lyricsWidget?.enableKaraoke ?? true, set: v => { Config.options.bar.lyricsWidget.enableKaraoke = v; } },
+        "bar:Text alignment": { type: "select", get: () => Config.options.bar.lyricsWidget?.textAlignment ?? "left", set: v => { Config.options.bar.lyricsWidget.textAlignment = v; }, options: lyricTextAlignmentOptions() },
         "bar:Translation language": { type: "select", get: () => Config.options.bar.lyricsWidget?.translation?.targetLanguage ?? "id", set: v => { Config.options.bar.lyricsWidget.translation.targetLanguage = v; }, options: lyricTranslationTargetOptions() },
         "hyprland:Active border color": { type: "select", get: () => Config.options.hyprland.general.borderColor.activeRole, set: v => { Config.options.hyprland.general.borderColor.activeRole = v; HyprlandConfig.applyBorderColors(); }, get options() { return ["primary", "secondary", "tertiary", "primaryContainer", "secondaryContainer", "tertiaryContainer", "layer0Border"].map(name => ({ value: name, color: roleColor(name) })); } },
         "hyprland:Active border opacity": { type: "spin", get: () => Math.round(Config.options.hyprland.general.borderColor.activeOpacity * 100), set: v => { Config.options.hyprland.general.borderColor.activeOpacity = v / 100.0; HyprlandConfig.applyBorderColors(); }, from: 0, to: 100, stepSize: 5 },
@@ -385,6 +394,7 @@ QtObject {
                 { type: "toggle", key: "bar:Use album cover color", title: Translation.tr("Use album cover color"), icon: "palette", kw: "album art cover accent tint" },
                 { type: "select", key: "bar:Album color style", title: Translation.tr("Album color style"), icon: "gradient", kw: "album cover gradient full solid background color" },
                 { type: "toggle", key: "bar:Enable karaoke", title: Translation.tr("Enable karaoke"), icon: "graphic_eq", kw: "karaoke word highlight sweep disable" },
+                { type: "select", key: "bar:Text alignment", title: Translation.tr("Text alignment"), icon: "format_align_left", kw: "lyrics text align left center right" },
                 { type: "select", key: "bar:Translation language", title: Translation.tr("Translation language"), icon: "translate", kw: "translate target language indonesian english japanese korean" }
             ]
         },

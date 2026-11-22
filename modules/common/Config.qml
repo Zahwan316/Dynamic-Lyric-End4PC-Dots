@@ -687,6 +687,8 @@ Singleton {
                     // "gradient" | "full"
                     property string albumColorStyle: "gradient"
                     property bool enableKaraoke: true
+                    // "left" | "center" | "right"
+                    property string textAlignment: "left"
 
                     // Urutan sumber lirik. Sumber gagal/timeout otomatis dilewati.
                     property list<string> sourceOrder: [

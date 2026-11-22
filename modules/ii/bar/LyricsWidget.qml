@@ -52,6 +52,12 @@ Rectangle {
     })[widgetSize] ?? 1.0
     function sp(value) { return value * root.widgetScale }
 
+    readonly property int lyricTextAlignment: ({
+        "left": Text.AlignLeft,
+        "center": Text.AlignCenter,
+        "right": Text.AlignRight
+    })[Config.options.bar.lyricsWidget?.textAlignment ?? "left"] ?? Text.AlignLeft
+
     // Kedua mode memakai siluet notch: hitam, leher rata di tepi layar/bar,
     // sudut bawah membulat. Floating island hanya digeser sedikit dari tepi atas.
     readonly property bool notchAtTop: !Config.options.bar.bottom
@@ -70,7 +76,17 @@ Rectangle {
     property color lyricDimColor: Qt.rgba(1.0, 1.0, 1.0, 0.36)
     property color subTextColor: Qt.rgba(1.0, 1.0, 1.0, 0.72)
     readonly property real maxCompactLyricWidth: root.sp(420)
-    property int yOffset: 0
+    // BarGroup mengapungkan widget di tengah bar. Untuk notch 1 baris yang
+    // lebih pendek dari bar, celah 1-2 px membuat siluet terlihat mengambang:
+    // tarik ke tepi bar (atas/bawah sesuai posisi bar) sampai mentok.
+    readonly property int notchEdgeYOffset: (!root.isFloatingIsland
+        && !Config.options.bar.vertical
+        && root.currentTierCount === 1
+        && !root.isExpanded
+        && root.morphProgress <= 0.01)
+        ? (root.notchAtTop ? -1 : 1) * Math.max(0, Math.round((Appearance.sizes.baseBarHeight - root.height) / 2))
+        : 0
+    property int yOffset: root.notchEdgeYOffset
 
     readonly property real expandedWidth: 492
     readonly property real expandedHeight: 404
@@ -2754,7 +2770,17 @@ Rectangle {
                     showThirdLine ? subLineText.implicitWidth : 0
                 )
 
-            implicitWidth: Math.min(maxContentW, root.maxCompactLyricWidth)
+            readonly property real contentWidth: Math.min(maxContentW, root.maxCompactLyricWidth)
+
+            function alignedX(textWidth) {
+                if (root.lyricTextAlignment === Text.AlignCenter)
+                    return Math.max(0, (lineItem.contentWidth - textWidth) / 2)
+                if (root.lyricTextAlignment === Text.AlignRight)
+                    return Math.max(0, lineItem.contentWidth - textWidth)
+                return 0
+            }
+
+            implicitWidth: contentWidth
             implicitHeight: isInstrumental ? instrumentalRow.implicitHeight : linesCol.implicitHeight
             clip: true
 
@@ -2839,24 +2865,27 @@ Rectangle {
                 id: linesCol
                 visible: !lineItem.isInstrumental
                 anchors.verticalCenter: parent.verticalCenter
+                width: lineItem.contentWidth
                 spacing: 0
 
                 Item {
                     visible: lineItem.showFirstLine
-                    width: origDimText.implicitWidth
+                    width: linesCol.width
                     height: origDimText.implicitHeight
                     x: -lineItem.origOverflow * lineItem.panRatio
 
                     Text {
                         id: origDimText
                         text: lineItem.rawText
+                        width: parent.width
+                        horizontalAlignment: root.lyricTextAlignment
                         color: root.lyricDimColor
                         font.pixelSize: root.sp(lineItem.tierCount >= 3 ? 13 : (lineItem.tierCount === 2 ? 14 : 15))
                         font.weight: Font.DemiBold
                     }
 
                     Item {
-                        anchors.left: origDimText.left
+                        x: lineItem.alignedX(origDimText.implicitWidth)
                         anchors.top: origDimText.top
                         anchors.bottom: origDimText.bottom
                         width: origDimText.implicitWidth * lineItem.progress
@@ -2864,6 +2893,7 @@ Rectangle {
 
                         Text {
                             text: lineItem.rawText
+                            width: origDimText.implicitWidth
                             color: root.lyricActiveColor
                             font.pixelSize: root.sp(lineItem.tierCount >= 3 ? 13 : (lineItem.tierCount === 2 ? 14 : 15))
                             font.weight: Font.DemiBold
@@ -2873,13 +2903,15 @@ Rectangle {
 
                 Item {
                     visible: lineItem.showSecondLine
-                    width: romDimText.implicitWidth
+                    width: linesCol.width
                     height: romDimText.implicitHeight
                     x: -lineItem.romOverflow * lineItem.panRatio
 
                     Text {
                         id: romDimText
                         text: lineItem.romanizedText
+                        width: parent.width
+                        horizontalAlignment: root.lyricTextAlignment
                         color: lineItem.romajiDimCol
                         // Harus sama dengan teks aktif di overlay, kalau tidak
                         // huruf yang belum dinyanyikan tampak lebih kecil.
@@ -2888,7 +2920,7 @@ Rectangle {
                     }
 
                     Item {
-                        anchors.left: romDimText.left
+                        x: lineItem.alignedX(romDimText.implicitWidth)
                         anchors.top: romDimText.top
                         anchors.bottom: romDimText.bottom
                         width: romDimText.implicitWidth * lineItem.progress
@@ -2896,6 +2928,7 @@ Rectangle {
 
                         Text {
                             text: lineItem.romanizedText
+                            width: romDimText.implicitWidth
                             color: lineItem.romajiActiveCol
                             font.pixelSize: root.sp(lineItem.primaryIsRomaji ? 14 : 12)
                             font.weight: Font.Medium
@@ -2910,7 +2943,8 @@ Rectangle {
                     color: root.subTextColor
                     font.pixelSize: root.sp(lineItem.primaryIsTrans ? 14 : 11)
                     elide: Text.ElideRight
-                    width: Math.min(implicitWidth, root.maxCompactLyricWidth)
+                    width: lineItem.contentWidth
+                    horizontalAlignment: root.lyricTextAlignment
                 }
             }
         }
@@ -3727,6 +3761,7 @@ Rectangle {
                                 font.weight: Font.Bold
                                 wrapMode: Text.WordWrap
                                 width: parent.width
+                                horizontalAlignment: root.lyricTextAlignment
                             }
                         }
 
@@ -3824,7 +3859,7 @@ Rectangle {
                                         width: parent.width
                                         textFormat: Text.RichText
                                         wrapMode: Text.WordWrap
-                                        horizontalAlignment: Text.AlignLeft
+                                        horizontalAlignment: root.lyricTextAlignment
                                         lineHeight: 1.15
                                         font.pixelSize: 17
                                         font.weight: Font.Bold
@@ -3839,7 +3874,7 @@ Rectangle {
                                         width: parent.width
                                         textFormat: Text.RichText
                                         wrapMode: Text.WordWrap
-                                        horizontalAlignment: Text.AlignLeft
+                                        horizontalAlignment: root.lyricTextAlignment
                                         lineHeight: 1.15
                                         font.pixelSize: rowDelegate.showFirstRaw ? 13 : 17
                                         font.weight: Font.DemiBold
@@ -3858,7 +3893,7 @@ Rectangle {
                                         width: parent.width
                                         text: rowDelegate.translatedText
                                         wrapMode: Text.WordWrap
-                                        horizontalAlignment: Text.AlignLeft
+                                        horizontalAlignment: root.lyricTextAlignment
                                         lineHeight: 1.2
                                         color: rowDelegate.isCurrent ? Qt.rgba(1, 1, 1, 0.85) : Qt.rgba(1, 1, 1, 0.62)
                                         font.pixelSize: rowDelegate.showFirstRaw ? 12 : 15

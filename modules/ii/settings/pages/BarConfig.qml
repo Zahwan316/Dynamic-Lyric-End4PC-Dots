@@ -509,6 +509,20 @@ ContentPage {
                     onCheckedChanged: { Config.options.bar.lyricsWidget.enableKaraoke = checked; }
                 }
 
+                ConfigSelectionArray {
+                    enabled: Config.lyricsWidgetInLayout
+                    opacity: enabled ? 1 : 0.4
+                    text: Translation.tr("Text alignment")
+                    icon: "format_align_left"
+                    currentValue: Config.options.bar.lyricsWidget?.textAlignment ?? "left"
+                    onSelected: newValue => { Config.options.bar.lyricsWidget.textAlignment = newValue }
+                    options: [
+                        { displayName: Translation.tr("Left"),   icon: "format_align_left",   value: "left" },
+                        { displayName: Translation.tr("Center"), icon: "format_align_center", value: "center" },
+                        { displayName: Translation.tr("Right"),  icon: "format_align_right",  value: "right" }
+                    ]
+                }
+
                 ConfigComboBox {
                     enabled: Config.lyricsWidgetInLayout
                     opacity: enabled ? 1 : 0.4

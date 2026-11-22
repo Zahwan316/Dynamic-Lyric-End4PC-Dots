@@ -79,6 +79,7 @@ All options live under `bar.lyricsWidget` in:
 | `useAlbumColor` | bool | `true` | Tint the compact background from the current album art. |
 | `albumColorStyle` | string | `"gradient"` | Only when `useAlbumColor` is on: `"gradient"` (black with album tint at the bottom) or `"full"` (solid album cover color as the background). |
 | `enableKaraoke` | bool | `true` | Animate the current line word-by-word. When off, the whole active line is simply highlighted. |
+| `textAlignment` | string | `"left"` | Lyric text alignment in both compact and expanded views: `"left"`, `"center"`, or `"right"`. |
 | `sourceOrder` | string[] | see below | Lyric provider order. Failed providers are skipped. |
 | `translation.targetLanguage` | string | `"id"` | Translation target, selectable in Settings → Bar → Lyrics widget. |
 | `translation.customEndpoint` | string | `""` | Optional third translation provider. |
@@ -123,6 +124,7 @@ Providers without configuration are skipped silently.
       "useAlbumColor": true,
       "albumColorStyle": "gradient",
       "enableKaraoke": true,
+      "textAlignment": "left",
       "sourceOrder": [
         "lrclib",
         "netease",
