@@ -77,6 +77,7 @@ All options live under `bar.lyricsWidget` in:
 | `mode` | string | `"notch"` | `"notch"`, `"floating"`, or `"floating-island"`. |
 | `size` | string | `"default"` | Compact/expanded widget scale for notch and floating island: `"extra-small"`, `"small"`, `"default"`, `"medium"`, `"large"`, `"very-large"`. |
 | `useAlbumColor` | bool | `true` | Tint the compact background from the current album art. |
+| `albumColorStyle` | string | `"gradient"` | Only when `useAlbumColor` is on: `"gradient"` (black with album tint at the bottom) or `"full"` (solid album cover color as the background). |
 | `enableKaraoke` | bool | `true` | Animate the current line word-by-word. When off, the whole active line is simply highlighted. |
 | `sourceOrder` | string[] | see below | Lyric provider order. Failed providers are skipped. |
 | `translation.targetLanguage` | string | `"id"` | Translation target, selectable in Settings → Bar → Lyrics widget. |
@@ -120,6 +121,7 @@ Providers without configuration are skipped silently.
       "mode": "notch",
       "size": "default",
       "useAlbumColor": true,
+      "albumColorStyle": "gradient",
       "enableKaraoke": true,
       "sourceOrder": [
         "lrclib",

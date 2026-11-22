@@ -487,6 +487,19 @@ ContentPage {
                     onCheckedChanged: { Config.options.bar.lyricsWidget.useAlbumColor = checked; }
                 }
 
+                ConfigSelectionArray {
+                    enabled: Config.lyricsWidgetInLayout && (Config.options.bar.lyricsWidget?.useAlbumColor ?? true)
+                    opacity: enabled ? 1 : 0.4
+                    text: Translation.tr("Album color style")
+                    icon: "gradient"
+                    currentValue: Config.options.bar.lyricsWidget?.albumColorStyle ?? "gradient"
+                    onSelected: newValue => { Config.options.bar.lyricsWidget.albumColorStyle = newValue }
+                    options: [
+                        { displayName: Translation.tr("Gradient color"), icon: "gradient", value: "gradient" },
+                        { displayName: Translation.tr("Full color"),     icon: "format_color_fill", value: "full" }
+                    ]
+                }
+
                 ConfigSwitch {
                     enabled: Config.lyricsWidgetInLayout
                     opacity: enabled ? 1 : 0.4

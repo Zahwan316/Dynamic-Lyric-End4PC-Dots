@@ -15,6 +15,9 @@ Rectangle {
     // --- Opsi dari Settings > Bar > Lyrics widget ---
     property string placementMode: Config.options.bar.lyricsWidget?.mode ?? "notch"
     property bool useAlbumColor: Config.options.bar.lyricsWidget?.useAlbumColor ?? true
+    // "gradient" = hitam dengan gradasi warna cover di bawah, "full" = warna cover solid.
+    readonly property string albumColorStyle: Config.options.bar.lyricsWidget?.albumColorStyle ?? "gradient"
+    readonly property bool fullAlbumColor: root.useAlbumColor && root.albumColorStyle === "full"
     property bool enableKaraoke: Config.options.bar.lyricsWidget?.enableKaraoke ?? true
     onEnableKaraokeChanged: if (!enableKaraoke) karaokeProgress = 1.0
 
@@ -100,12 +103,17 @@ Rectangle {
     readonly property color effectiveSliderColor: root.useAlbumColor ? albumSliderColor : "#b8b8b8"
 
     // Gradasi latar: hitam di atas, tint warna cover hanya di bagian bawah.
-    readonly property color gradientMidColor: root.useAlbumColor
-        ? Qt.tint("#0a0a0a", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.22))
-        : "#000000"
-    readonly property color gradientBottomColor: root.useAlbumColor
-        ? Qt.tint("#101010", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.82))
-        : "#000000"
+    // Mode "full" memakai warna cover solid di seluruh latar.
+    readonly property color gradientMidColor: root.fullAlbumColor
+        ? root.effectiveAccentColor
+        : (root.useAlbumColor
+            ? Qt.tint("#0a0a0a", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.22))
+            : "#000000")
+    readonly property color gradientBottomColor: root.fullAlbumColor
+        ? root.effectiveAccentColor
+        : (root.useAlbumColor
+            ? Qt.tint("#101010", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.82))
+            : "#000000")
 
     // --- Mode Tampilan Lirik (3 Tombol: Translate, Romaji, Original) ---
     property bool showTranslate: true
@@ -2917,16 +2925,23 @@ Rectangle {
         visible: root.isFloatingIsland
         radius: root.sp(24)
         gradient: Gradient {
-            GradientStop { position: 0.0; color: "#000000" }
+            GradientStop {
+                position: 0.0
+                color: root.fullAlbumColor ? root.effectiveAccentColor : "#000000"
+            }
             GradientStop {
                 position: 0.62
-                color: root.useAlbumColor
-                    ? Qt.tint("#070707", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.28))
-                    : "#000000"
+                color: root.fullAlbumColor
+                    ? root.effectiveAccentColor
+                    : (root.useAlbumColor
+                        ? Qt.tint("#070707", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.28))
+                        : "#000000")
             }
             GradientStop {
                 position: 1.0
-                color: root.useAlbumColor ? root.effectiveAccentColor : "#000000"
+                color: root.fullAlbumColor
+                    ? root.effectiveAccentColor
+                    : (root.useAlbumColor ? root.effectiveAccentColor : "#000000")
             }
         }
     }
@@ -2951,14 +2966,21 @@ Rectangle {
             id: notchAlbumGradient
             y1: 0
             y2: root.height
-            GradientStop { position: 0.0; color: "#000000" }
+            GradientStop {
+                position: 0.0
+                color: root.fullAlbumColor ? root.effectiveAccentColor : "#000000"
+            }
             GradientStop {
                 position: 0.55
-                color: Qt.tint("#050505", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.28))
+                color: root.fullAlbumColor
+                    ? root.effectiveAccentColor
+                    : Qt.tint("#050505", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.28))
             }
             GradientStop {
                 position: 1.0
-                color: Qt.tint("#080808", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.62))
+                color: root.fullAlbumColor
+                    ? root.effectiveAccentColor
+                    : Qt.tint("#080808", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.62))
             }
         }
 
@@ -3203,8 +3225,14 @@ Rectangle {
 
                 // Gradasi: hitam di atas, bayangan warna cover di bawah (lebih lembut & tidak bleach).
                 gradient: Gradient {
-                    GradientStop { position: 0.00; color: "#000000" }
-                    GradientStop { position: 0.42; color: "#000000" }
+                    GradientStop {
+                        position: 0.00
+                        color: root.fullAlbumColor ? root.effectiveAccentColor : "#000000"
+                    }
+                    GradientStop {
+                        position: 0.42
+                        color: root.fullAlbumColor ? root.effectiveAccentColor : "#000000"
+                    }
                     GradientStop { position: 0.74; color: root.gradientMidColor }
                     GradientStop { position: 1.00; color: root.gradientBottomColor }
                 }

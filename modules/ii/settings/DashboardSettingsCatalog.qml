@@ -44,6 +44,13 @@ QtObject {
         ];
     }
 
+    function lyricAlbumColorStyleOptions() {
+        return [
+            { displayName: Translation.tr("Gradient color"), icon: "gradient", value: "gradient" },
+            { displayName: Translation.tr("Full color"),     icon: "format_color_fill", value: "full" }
+        ];
+    }
+
     function lyricSizeOptions() {
         return [
             { displayName: Translation.tr("Extra small"), icon: "format_size", value: "extra-small" },
@@ -157,6 +164,7 @@ QtObject {
         "bar:Placement": { type: "select", get: () => Config.options.bar.lyricsWidget?.mode ?? "notch", set: v => { Config.options.bar.lyricsWidget.mode = v; }, options: [{ displayName: Translation.tr("Notch"), icon: "crop_landscape", value: "notch" }, { displayName: Translation.tr("Floating island"), icon: "web_asset", value: "floating" }] },
         "bar:Lyrics widget size": { type: "select", get: () => Config.options.bar.lyricsWidget?.size ?? "default", set: v => { Config.options.bar.lyricsWidget.size = v; }, options: lyricSizeOptions() },
         "bar:Use album cover color": { type: "switch", get: () => Config.options.bar.lyricsWidget?.useAlbumColor ?? true, set: v => { Config.options.bar.lyricsWidget.useAlbumColor = v; } },
+        "bar:Album color style": { type: "select", get: () => Config.options.bar.lyricsWidget?.albumColorStyle ?? "gradient", set: v => { Config.options.bar.lyricsWidget.albumColorStyle = v; }, options: lyricAlbumColorStyleOptions() },
         "bar:Enable karaoke": { type: "switch", get: () => Config.options.bar.lyricsWidget?.enableKaraoke ?? true, set: v => { Config.options.bar.lyricsWidget.enableKaraoke = v; } },
         "bar:Translation language": { type: "select", get: () => Config.options.bar.lyricsWidget?.translation?.targetLanguage ?? "id", set: v => { Config.options.bar.lyricsWidget.translation.targetLanguage = v; }, options: lyricTranslationTargetOptions() },
         "hyprland:Active border color": { type: "select", get: () => Config.options.hyprland.general.borderColor.activeRole, set: v => { Config.options.hyprland.general.borderColor.activeRole = v; HyprlandConfig.applyBorderColors(); }, get options() { return ["primary", "secondary", "tertiary", "primaryContainer", "secondaryContainer", "tertiaryContainer", "layer0Border"].map(name => ({ value: name, color: roleColor(name) })); } },
@@ -375,6 +383,7 @@ QtObject {
                 { type: "select", key: "bar:Placement", title: Translation.tr("Placement"), icon: "dashboard_customize", kw: "notch floating island position" },
                 { type: "select", key: "bar:Lyrics widget size", title: Translation.tr("Size"), icon: "format_size", kw: "notch floating island size extra small medium large scale" },
                 { type: "toggle", key: "bar:Use album cover color", title: Translation.tr("Use album cover color"), icon: "palette", kw: "album art cover accent tint" },
+                { type: "select", key: "bar:Album color style", title: Translation.tr("Album color style"), icon: "gradient", kw: "album cover gradient full solid background color" },
                 { type: "toggle", key: "bar:Enable karaoke", title: Translation.tr("Enable karaoke"), icon: "graphic_eq", kw: "karaoke word highlight sweep disable" },
                 { type: "select", key: "bar:Translation language", title: Translation.tr("Translation language"), icon: "translate", kw: "translate target language indonesian english japanese korean" }
             ]

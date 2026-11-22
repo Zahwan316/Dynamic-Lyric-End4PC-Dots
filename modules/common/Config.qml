@@ -684,6 +684,8 @@ Singleton {
                     // "extra-small" | "small" | "default" | "medium" | "large" | "very-large"
                     property string size: "default"
                     property bool useAlbumColor: true
+                    // "gradient" | "full"
+                    property string albumColorStyle: "gradient"
                     property bool enableKaraoke: true
 
                     // Urutan sumber lirik. Sumber gagal/timeout otomatis dilewati.
