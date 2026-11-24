@@ -185,7 +185,7 @@ Rectangle {
     property double lastFallbackLineMs: 0.0
     property int lastFallbackCharCount: 0
     property real adaptiveMsPerChar: 72.0
-    // Baris live (sptlrx) sesegera mengalahkan auto-advance model tersinkron.
+    // Baris live dari Sonora sesegera mengalahkan auto-advance model tersinkron.
     property double lastLiveLineWallMs: 0.0
 
     // Retry fetch saat durasi baru diketahui (umum pada Spotify/MPRIS awal).
@@ -216,6 +216,8 @@ Rectangle {
 
     property bool hasSyncedLrc: false
     property int lrcSourcePriority: 0
+    // Sonora adalah sumber lirik utama. Sheet-nya dibaca lewat CLI, bukan
+    // lewat MPRIS (metadata MPRIS Sonora tidak membawa lirik).
     property real systemVolume: 0.7
     property bool systemMuted: false
     property bool volumeOsdActive: false
@@ -1850,7 +1852,7 @@ Rectangle {
         root.isLoadingLyrics = false
         if (!root.hasSyncedLrc && lyricModel.count === 0)
             root.lyricsNotFound = true
-        // Baris live sptlrx tidak menghalangi pencarian ulang: begitu sumber
+        // Baris live Sonora tidak menghalangi pencarian ulang: begitu sumber
         // lain berhasil, model akan ditimpa lirik tersinkron yang baru.
         if (!root.hasSyncedLrc && root.lyricFetchAttempt < root.maxLyricFetchAttempts) {
             retryLyricsFetchTimer.stop()
@@ -2833,7 +2835,7 @@ Rectangle {
     function updateLyricLine(newLine) {
         // Jangan buang baris live hanya karena LRC tersinkron sudah ada.
         // Spotify sering punya intro instrumental panjang sebelum baris LRC
-        // pertama; sptlrx tetap harus bisa menampilkan lirik di situ.
+        // pertama; baris live Sonora tetap harus bisa menampilkan lirik di situ.
         if (isInstrumentalText(newLine)) {
             root.currentRawLyric = ""
             if (root.sessionActive || root.hasActivePlayer) {
@@ -2915,27 +2917,102 @@ Rectangle {
         }
     }
 
-    // --- Proses sptlrx ---
-    Process {
-        id: sptlrxProc
-        command: ["sptlrx", "--player", "mpris", "pipe"]
-        running: true
+    // --- Sumber lirik: Sonora ---
+    // `sonora lyrics --json` membaca sheet lirik yang sedang dipakai Sonora
+    // tanpa mencari ulang. Responsnya memuat seluruh baris tersinkron,
+    // baris aktif/berikutnya, status instrumental, dan romaji.
+    function handleSonoraLyrics(raw) {
+        if (!raw || !root.hasActivePlayer)
+            return
+        if (root.activePlayerName.indexOf("sonora") === -1)
+            return
 
-        stdout: SplitParser {
-            onRead: data => {
-                root.updateLyricLine(data.trim())
+        let data = null
+        try {
+            data = JSON.parse(raw.trim())
+        } catch (e) {
+            return
+        }
+        if (!data || typeof data !== "object")
+            return
+
+        const trackId = root.currentTrackId
+        if (!trackId)
+            return
+
+        const state = String(data.state || "").toLowerCase()
+        if (state === "instrumental" || data.instrumental === true) {
+            root.updateLyricLine(Translation.tr("Instrumental"))
+            return
+        }
+        // Sonora belum punya jawaban: biarkan rantai fallback lama yang
+        // menampilkan "Lyric not found" atau mencari dari penyedia lain.
+        if (state !== "ready" && state !== "")
+            return
+
+        const lines = Array.isArray(data.lines) ? data.lines : []
+        if (lines.length > 0 && root.lrcSourcePriority < 5) {
+            const entries = []
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i] || {}
+                const text = String(line.text || "").trim()
+                if (text === "" || root.isInstrumentalText(text))
+                    continue
+                const startMs = Number(line.start_ms)
+                if (!isFinite(startMs) || startMs < 0)
+                    continue
+                const nextMs = (i + 1 < lines.length) ? Number(lines[i + 1]?.start_ms) : NaN
+                const endSec = (isFinite(nextMs) && nextMs > startMs) ? nextMs / 1000.0 : -1
+                entries.push({
+                    timeSec: startMs / 1000.0,
+                    endSec: endSec,
+                    explicitEndSec: endSec,
+                    rawText: text,
+                    romanizedText: String(line.romanized || ""),
+                    translatedText: "",
+                    wordTimingsJson: "",
+                    isInstrumental: false
+                })
+            }
+            if (entries.length > 0) {
+                root.applyParsedLyricsToModel(entries, 5, trackId)
+                root.writeCachedLyrics(
+                    root.lyricsCacheKey(root.trackTitle, root.trackArtist, root.trackAlbum),
+                    entries, 5)
             }
         }
 
+        const current = data.current || null
+        const currentText = current && typeof current.text === "string" ? current.text.trim() : ""
+        if (currentText !== "")
+            root.updateLyricLine(currentText)
+    }
+
+    Process {
+        id: sonoraLyricsProc
+        command: ["sonora", "lyrics", "--json"]
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: root.handleSonoraLyrics(text)
+        }
         onExited: (exitCode, exitStatus) => {
-            restartTimer.start()
+            sonoraLyricsPollTimer.start()
         }
     }
 
+    // CLI Sonora bersifat snapshot, jadi dibaca berkala untuk mengikuti
+    // baris aktif. Pergantian lagu ditangani lewat currentTrackId.
     Timer {
-        id: restartTimer
-        interval: 3000
-        onTriggered: sptlrxProc.running = true
+        id: sonoraLyricsPollTimer
+        interval: 400
+        repeat: true
+        running: true
+        onTriggered: {
+            if (!root.hasActivePlayer || root.activePlayerName.indexOf("sonora") === -1)
+                return
+            if (!sonoraLyricsProc.running)
+                sonoraLyricsProc.running = true
+        }
     }
 
     Component.onCompleted: {

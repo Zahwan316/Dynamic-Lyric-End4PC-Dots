@@ -85,7 +85,11 @@ All options live under `bar.lyricsWidget` in:
 | `translation.customEndpoint` | string | `""` | Optional third translation provider. |
 | `credentials.*` | strings | `""` | Server URLs/tokens for the providers that need them. |
 
-### Default source order
+### Lyric sources
+
+When Sonora is the active player, its own lyric sheet is the primary source: the widget polls `sonora lyrics --json`, which returns the complete synced line list, the current line, romanization, and instrumental state without starting a new lookup. Sonora's result is also cached locally.
+
+The provider chain below is used as a fallback when Sonora has no lyrics (or when another player is active):
 
 ```text
 lrclib → netease → kugou → musixmatch → subsonic → jellyfin → applemusic → youtubemusic
@@ -97,7 +101,7 @@ Behavior:
 - HTTP errors, timeouts, empty/invalid payloads, or lower-priority results fall through to the next provider;
 - fetched lyrics are cached by normalized title/artist/album (up to 32 tracks) and reused instantly when that track is played again, including after a shell restart;
 - fetching is scheduled as soon as MPRIS metadata appears (300ms debounce) instead of waiting for playback to start, so the complete lyric list is ready before the first vocal line;
-- if every provider fails at the start of a track, the whole chain is retried twice (8s apart); live fallback lines from the player do not block the retry, and are replaced by synced lyrics as soon as a provider succeeds;
+- if every provider fails at the start of a track, the whole chain is retried twice (8s apart); live lines from Sonora do not block the retry, and are replaced by synced lyrics as soon as a provider succeeds;
 - word-timed results (enhanced LRC/YRC) outrank plain line-timed LRC.
 
 ### Provider requirements
@@ -215,7 +219,7 @@ The notch gradient strength is in the `LinearGradient` named `notchAlbumGradient
 ## Troubleshooting
 
 - **No lyrics appear:** confirm the widget is actually in a bar layout, then check `sourceOrder` and credentials for the providers you enabled.
-- **Spotify / live lyrics do not appear:** set `bar.media.preferredPlayer` to `spotify` (or the exact player identity) in Settings → Bar → Preferred player. The widget now follows that preference instead of picking the first playing MPRIS bus. Live lines from `sptlrx` are also allowed through even when a synced LRC exists, which fixes long instrumental intros.
+- **Spotify / live lyrics do not appear:** set `bar.media.preferredPlayer` to `spotify` (or the exact player identity) in Settings → Bar → Preferred player. The widget now follows that preference instead of picking the first playing MPRIS bus. With Sonora active, live lines from `sonora lyrics --json` are also allowed through even when a synced LRC exists, which fixes long instrumental intros.
 - **Only plain line sync:** the matched source did not return enhanced LRC/YRC; try reordering providers.
 - **Wrong translation language:** set `bar.lyricsWidget.translation.targetLanguage`.
 - **Widget appears in the bar while floating mode is active:** remove it from the bar layout; floating mode follows layout presence.
