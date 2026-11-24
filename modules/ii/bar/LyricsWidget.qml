@@ -991,7 +991,12 @@ Rectangle {
         const liveLineFresh = root.lastLiveLineWallMs > 0
             && (Date.now() - root.lastLiveLineWallMs) < 3500
 
-        if (!liveLineFresh && root.hasReliablePlayerClock && root.hasSyncedLrc && lyricModel.count > 0) {
+        const activeIsLiveRow = root.activeLyricIndex >= 0
+            && root.activeLyricIndex < lyricModel.count
+            && lyricModel.get(root.activeLyricIndex).timeSec < 0
+
+        if (!activeIsLiveRow && !liveLineFresh && root.hasReliablePlayerClock
+            && root.hasSyncedLrc && lyricModel.count > 0) {
             if (calPos >= 0.0) {
                 let targetIdx = -1
                 const lookupPos = calPos
@@ -2939,23 +2944,25 @@ Rectangle {
         root.activeLineDurationSec = estDur
         root.activeWordTimings = buildRelativeWordTimings(newLine, estDur)
 
-        transitionToText(newLine, initialRom, initialTrans, false, false)
-
-        if (!root.hasSyncedLrc) {
-            if (lyricModel.count === 0 || lyricModel.get(lyricModel.count - 1).rawText !== newLine) {
-                lyricModel.append({
-                    timeSec: -1,
-                    endSec: -1,
-                    explicitEndSec: -1,
-                    rawText: newLine,
-                    romanizedText: initialRom,
-                    translatedText: initialTrans,
-                    wordTimingsJson: "",
-                    isInstrumental: false
-                })
-            }
-            root.activeLyricIndex = lyricModel.count - 1
+        // Baris live yang tidak cocok dengan model (juga saat LRC sinkron
+        // sudah ada) harus masuk ke model. Jika tidak, compact menampilkan
+        // baris Sonora yang benar sementara expanded tetap menampilkan baris
+        // lama dari LRC.
+        if (lyricModel.count === 0 || lyricModel.get(lyricModel.count - 1).rawText !== newLine) {
+            lyricModel.append({
+                timeSec: -1,
+                endSec: -1,
+                explicitEndSec: -1,
+                rawText: newLine,
+                romanizedText: initialRom,
+                translatedText: initialTrans,
+                wordTimingsJson: "",
+                isInstrumental: false
+            })
         }
+        root.activeLyricIndex = lyricModel.count - 1
+
+        transitionToText(newLine, initialRom, initialTrans, false, false)
 
         if (!cached || cached.translatedText === "") {
             enqueueTranslationLines([newLine], true)
