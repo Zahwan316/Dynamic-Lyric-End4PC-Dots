@@ -126,18 +126,22 @@ Rectangle {
         ? Qt.rgba(romajiActiveColor.r, romajiActiveColor.g, romajiActiveColor.b, 0.38)
         : "#9e9e9e"
 
-    // Gradasi latar: hitam di atas, tint warna cover hanya di bagian bawah.
-    // Mode "full" memakai warna cover solid di seluruh latar.
-    readonly property color gradientMidColor: root.fullAlbumColor
+    // Expanded view memakai permukaan near-black yang datar. Warna cover
+    // hanya jadi hint sangat tipis (atau solid penuh saat gaya "full").
+    readonly property color expandedSurfaceColor: root.fullAlbumColor
         ? root.effectiveAccentColor
         : (root.useAlbumColor
-            ? Qt.tint("#0a0a0a", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.22))
-            : "#000000")
+            ? Qt.tint("#080808", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.12))
+            : "#080808")
+    readonly property color gradientMidColor: root.expandedSurfaceColor
     readonly property color gradientBottomColor: root.fullAlbumColor
         ? root.effectiveAccentColor
         : (root.useAlbumColor
-            ? Qt.tint("#101010", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.82))
-            : "#000000")
+            ? Qt.tint("#0b0b0b", Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.26))
+            : "#0b0b0b")
+    readonly property color expandedBorderColor: root.useAlbumColor
+        ? Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.18)
+        : Qt.rgba(1, 1, 1, 0.08)
 
     // --- Mode Tampilan Lirik (3 Tombol: Translate, Romaji, Original) ---
     property bool showTranslate: true
@@ -3656,9 +3660,9 @@ Rectangle {
                 // dan progress di-clamp agar OutBack tidak membuat kartu bergetar.
                 width: morphBaseWidth + ((root.sp(root.expandedWidth) - morphBaseWidth) * Math.max(0.0, Math.min(1.0, root.morphProgress)))
                 height: morphBaseHeight + ((root.sp(root.expandedHeight) - morphBaseHeight) * Math.max(0.0, Math.min(1.0, root.morphProgress)))
-                radius: root.sp(12 + (14 * Math.max(0.0, Math.min(1.0, root.morphProgress))))
-                border.width: 0
-                border.color: "transparent"
+                radius: root.sp(12 + (8 * Math.max(0.0, Math.min(1.0, root.morphProgress))))
+                border.width: 1
+                border.color: root.expandedBorderColor
                 clip: true
 
                 HoverHandler {
@@ -3666,28 +3670,11 @@ Rectangle {
                     onHoveredChanged: root.updateHoverState()
                 }
 
-                // Gradasi: hitam di atas, bayangan warna cover di bawah (lebih lembut & tidak bleach).
+                // Permukaan flat: satu warna dominan, tanpa highlight dekoratif.
                 gradient: Gradient {
-                    GradientStop {
-                        position: 0.00
-                        color: root.fullAlbumColor ? root.effectiveAccentColor : "#000000"
-                    }
-                    GradientStop {
-                        position: 0.42
-                        color: root.fullAlbumColor ? root.effectiveAccentColor : "#000000"
-                    }
-                    GradientStop { position: 0.74; color: root.gradientMidColor }
+                    GradientStop { position: 0.00; color: root.expandedSurfaceColor }
+                    GradientStop { position: 0.64; color: root.expandedSurfaceColor }
                     GradientStop { position: 1.00; color: root.gradientBottomColor }
-                }
-
-                // Garis tipis atas memberi kesan kartu melayang tanpa mengganggu gradasi.
-                Rectangle {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    anchors.margins: 1
-                    height: 1
-                    color: Qt.rgba(1, 1, 1, 0.07)
                 }
 
                 opacity: Math.max(0.0, Math.min(1.0, root.morphProgress * 6.0))
@@ -4370,13 +4357,13 @@ Rectangle {
                             radius: 19
                             scale: transBtnMouse.pressed ? 0.95 : 1.0
                             color: root.showTranslate
-                                ? root.effectiveButtonFill
+                                ? Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b, 0.46)
                                 : Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b,
-                                    transBtnMouse.containsMouse ? 0.30 : 0.16)
-                            border.width: 2
+                                    transBtnMouse.containsMouse ? 0.20 : 0.08)
+                            border.width: 1
                             border.color: root.showTranslate
-                                ? root.effectiveButtonBorder
-                                : Qt.rgba(root.effectiveButtonBorder.r, root.effectiveButtonBorder.g, root.effectiveButtonBorder.b, 0.55)
+                                ? Qt.rgba(root.effectiveButtonBorder.r, root.effectiveButtonBorder.g, root.effectiveButtonBorder.b, 0.45)
+                                : Qt.rgba(root.effectiveButtonBorder.r, root.effectiveButtonBorder.g, root.effectiveButtonBorder.b, 0.24)
 
                             Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutBack } }
                             Behavior on color { ColorAnimation { duration: 180 } }
@@ -4422,13 +4409,13 @@ Rectangle {
                             radius: 19
                             scale: romSubBtnMouse.pressed ? 0.95 : 1.0
                             color: root.showRomajiSubline
-                                ? Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b, 0.72)
+                                ? Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b, 0.46)
                                 : Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b,
-                                    romSubBtnMouse.containsMouse ? 0.30 : 0.14)
-                            border.width: 2
+                                    romSubBtnMouse.containsMouse ? 0.20 : 0.08)
+                            border.width: 1
                             border.color: root.showRomajiSubline
-                                ? root.effectiveButtonBorder
-                                : Qt.rgba(root.effectiveButtonBorder.r, root.effectiveButtonBorder.g, root.effectiveButtonBorder.b, 0.50)
+                                ? Qt.rgba(root.effectiveButtonBorder.r, root.effectiveButtonBorder.g, root.effectiveButtonBorder.b, 0.45)
+                                : Qt.rgba(root.effectiveButtonBorder.r, root.effectiveButtonBorder.g, root.effectiveButtonBorder.b, 0.24)
 
                             Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutBack } }
                             Behavior on color { ColorAnimation { duration: 180 } }
@@ -4474,13 +4461,13 @@ Rectangle {
                             radius: 19
                             scale: origBtnMouse.pressed ? 0.95 : 1.0
                             color: root.showOriginalLanguage
-                                ? Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b, 0.72)
+                                ? Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b, 0.46)
                                 : Qt.rgba(root.effectiveButtonFill.r, root.effectiveButtonFill.g, root.effectiveButtonFill.b,
-                                    origBtnMouse.containsMouse ? 0.30 : 0.14)
-                            border.width: 2
+                                    origBtnMouse.containsMouse ? 0.20 : 0.08)
+                            border.width: 1
                             border.color: root.showOriginalLanguage
-                                ? root.effectiveButtonBorder
-                                : Qt.rgba(root.effectiveButtonBorder.r, root.effectiveButtonBorder.g, root.effectiveButtonBorder.b, 0.50)
+                                ? Qt.rgba(root.effectiveButtonBorder.r, root.effectiveButtonBorder.g, root.effectiveButtonBorder.b, 0.45)
+                                : Qt.rgba(root.effectiveButtonBorder.r, root.effectiveButtonBorder.g, root.effectiveButtonBorder.b, 0.24)
 
                             Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutBack } }
                             Behavior on color { ColorAnimation { duration: 180 } }
