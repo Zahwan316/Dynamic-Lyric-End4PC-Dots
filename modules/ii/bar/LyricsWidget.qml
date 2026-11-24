@@ -118,6 +118,14 @@ Rectangle {
     readonly property color effectiveButtonBorder: root.useAlbumColor ? albumButtonBorder : "#5c5c5c"
     readonly property color effectiveSliderColor: root.useAlbumColor ? albumSliderColor : "#b8b8b8"
 
+    // Romaji tetap kontras di atas latar hitam walau pewarnaan album dimatikan.
+    readonly property color romajiActiveColor: root.useAlbumColor
+        ? Qt.lighter(root.effectiveAccentColor, 1.42)
+        : "#ededed"
+    readonly property color romajiDimColor: root.useAlbumColor
+        ? Qt.rgba(romajiActiveColor.r, romajiActiveColor.g, romajiActiveColor.b, 0.38)
+        : "#9e9e9e"
+
     // Gradasi latar: hitam di atas, tint warna cover hanya di bagian bawah.
     // Mode "full" memakai warna cover solid di seluruh latar.
     readonly property color gradientMidColor: root.fullAlbumColor
@@ -144,6 +152,8 @@ Rectangle {
     property bool useSlotA: true
     property real karaokeProgress: 0.0
     property bool isLoadingLyrics: false
+    // True hanya setelah semua sumber selesai dan tidak ada satu pun baris lirik.
+    property bool lyricsNotFound: false
     property bool sessionActive: false
     property bool isFallbackLine: true
     property bool isInstrumentalLine: false
@@ -755,9 +765,21 @@ Rectangle {
             return true
         if (/^[\s♪♫♩♬🎵🎶♭♮♯~～\-—–_•·.…*]+$/.test(trimmed))
             return true
-        if (/^[(\[【（]?\s*(instrumental|interlude|intro|outro|music|solo|guitar solo|piano solo|melody|break|musik)\s*[)\]】）]?$/i.test(trimmed))
+        if (/^[(\[【（]?\s*(instrumental|interlude|intro|introduction|opening|outro|reff|refrain|chorus|bridge|music|solo|guitar solo|piano solo|melody|break|musik)\s*[)\]】）]?$/i.test(trimmed))
             return true
         return false
+    }
+
+    // Label yang ditampilkan menggantikan titik-titik pada bagian tanpa vokal.
+    function instrumentalSectionLabel(str) {
+        const t = (str || "").trim().toLowerCase()
+        if (/opening|intro|introduction|pembukaan/.test(t))
+            return Translation.tr("Opening")
+        if (/reff|refrain|chorus|refr/.test(t))
+            return Translation.tr("Reff")
+        if (/outro|ending|penutup/.test(t))
+            return Translation.tr("Outro")
+        return Translation.tr("Instrumental")
     }
 
     // --- Estimasi Durasi Vokal Berdasarkan Panjang-Pendek & Jenis Aksara Baris Lirik ---
@@ -1112,6 +1134,17 @@ Rectangle {
         if (convertedAny && !containsNonLatin(out))
             return out.trim()
         return ""
+    }
+
+    // Baris yang sudah memakai alfabet Latin (mis. lirik Inggris di tengah lagu
+    // Korea/Jepang/Arab) tidak punya romaji. Saat tombol Original mati, baris itu
+    // ditampilkan apa adanya agar tidak otomatis berubah menjadi terjemahan.
+    function romajiForDisplay(rawText, romanizedText) {
+        if (romanizedText && romanizedText !== "")
+            return romanizedText
+        if (isInstrumentalText(rawText) || containsNonLatin(rawText))
+            return ""
+        return rawText
     }
 
     function normalizeLyricMatchKey(str) {
@@ -1478,8 +1511,12 @@ Rectangle {
                 done(false, bestRom, "")
                 return
             }
+            // Baris Latin dari lagu yang sudah sebahasa dengan target tidak perlu
+            // diterjemahkan. Baris non-Latin tetap diterjemahkan walaupun bahasa
+            // utama terdeteksi sama (kasus lagu campur bahasa).
             if (root.detectedTrackLanguage !== ""
-                && langCodesMatch(root.detectedTrackLanguage, translateTargetLanguage())) {
+                && langCodesMatch(root.detectedTrackLanguage, translateTargetLanguage())
+                && !containsNonLatin(line)) {
                 done(bestRom !== "", bestRom, "")
                 return
             }
@@ -1551,7 +1588,10 @@ Rectangle {
 
             if (sameLanguage) {
                 const firstDetection = root.detectedTrackLanguage === ""
-                root.detectedTrackLanguage = normalizeLangCode(detectedLang)
+                // Satu baris Latin di tengah lagu Korea/Jepang/Arab tidak boleh
+                // menimpa bahasa utama yang sudah terdeteksi dari baris non-Latin.
+                if (firstDetection || containsNonLatin(line))
+                    root.detectedTrackLanguage = normalizeLangCode(detectedLang)
                 // Matikan tombol translate sekali saat bahasa lagu terdeteksi
                 // sama dengan target. User masih bisa menyalakannya manual.
                 if (firstDetection)
@@ -1643,6 +1683,8 @@ Rectangle {
             return
 
         root.lrcSourcePriority = 0
+        root.lyricsNotFound = false
+        root.isLoadingLyrics = true
         const trackSnapshot = root.currentTrackId
         const order = Config.options.bar.lyricsWidget?.sourceOrder || []
         const ctx = {
@@ -1651,7 +1693,8 @@ Rectangle {
             album: album || "",
             durationSec: durationSec || 0,
             trackSnapshot: trackSnapshot,
-            done: null
+            done: null,
+            completed: false
         }
         root.lyricFetchContext = ctx
         root.lastFetchDurationSec = ctx.durationSec
@@ -1673,11 +1716,24 @@ Rectangle {
         fetchExternalLyrics(root.trackTitle, root.trackArtist, root.trackAlbum, dur)
     }
 
+    function markLyricsNotFound() {
+        if (!root.sessionActive && !root.hasActivePlayer)
+            return
+        if (root.hasSyncedLrc || lyricModel.count > 0)
+            return
+        root.isLoadingLyrics = false
+        root.lyricsNotFound = true
+    }
+
     function tryLyricProvider(index, order, ctx) {
-        if (!ctx || ctx.trackSnapshot && root.currentTrackId !== ctx.trackSnapshot)
+        if (!ctx || ctx.completed || ctx.trackSnapshot && root.currentTrackId !== ctx.trackSnapshot)
             return
-        if (index >= order.length)
+        if (root.hasSyncedLrc || lyricModel.count > 0)
             return
+        if (index >= order.length) {
+            markLyricsNotFound()
+            return
+        }
 
         const name = String(order[index] || "").toLowerCase()
         const provider = root.lyricProviderMap[name]
@@ -1686,18 +1742,31 @@ Rectangle {
             return
         }
 
-        ctx.done = (ok, priority) => {
-            if (!ctx || ctx.trackSnapshot && root.currentTrackId !== ctx.trackSnapshot)
+        // Settled mencegah callback terlambat dari sumber sebelumnya melompati
+        // sumber berikutnya. Gagal/kosong selalu lanjut, sukses penuh (word
+        // timing) menghentikan pencarian.
+        let settled = false
+        const finish = (ok, priority) => {
+            if (settled || !ctx || ctx.completed)
                 return
-            if (ok && priority > root.lrcSourcePriority)
+            settled = true
+            if (ctx.trackSnapshot && root.currentTrackId !== ctx.trackSnapshot)
                 return
+            if (ok && priority >= 2) {
+                ctx.completed = true
+                return
+            }
             tryLyricProvider(index + 1, order, ctx)
         }
+        ctx.done = finish
         provider(ctx)
     }
 
     function commitLyricResult(entries, priority, ctx, done) {
-        if (!entries || entries.length === 0 || !ctx || ctx.trackSnapshot && root.currentTrackId !== ctx.trackSnapshot) {
+        // Metadata LRC atau blok "[Instrumental]" saja bukan lirik: anggap gagal
+        // agar sumber berikutnya tetap dicoba.
+        const hasVocalLine = (entries || []).some(e => e && !e.isInstrumental && (e.rawText || "").trim() !== "")
+        if (!hasVocalLine || !ctx || ctx.trackSnapshot && root.currentTrackId !== ctx.trackSnapshot) {
             if (done) done(false, priority)
             return false
         }
@@ -1792,7 +1861,7 @@ Rectangle {
                 timeSec: 0.0,
                 endSec: sortedEntries[0].timeSec,
                 explicitEndSec: sortedEntries[0].timeSec,
-                rawText: "",
+                rawText: "Opening",
                 romanizedText: "",
                 translatedText: "",
                 wordTimingsJson: "",
@@ -1832,7 +1901,7 @@ Rectangle {
                     timeSec: breakStart,
                     endSec: nextStart,
                     explicitEndSec: nextStart,
-                    rawText: "",
+                    rawText: "Instrumental",
                     romanizedText: "",
                     translatedText: "",
                     wordTimingsJson: "",
@@ -1858,7 +1927,7 @@ Rectangle {
                         timeSec: outroStart,
                         endSec: trackLen,
                         explicitEndSec: trackLen,
-                        rawText: "",
+                        rawText: "Outro",
                         romanizedText: "",
                         translatedText: "",
                         wordTimingsJson: "",
@@ -1923,7 +1992,7 @@ Rectangle {
                     timeSec: lineStartSec,
                     endSec: lineStartSec + Math.max(0.4, lineDurSec),
                     explicitEndSec: lineStartSec + Math.max(0.4, lineDurSec),
-                    rawText: "",
+                    rawText: cleanText !== "" ? cleanText : "Instrumental",
                     romanizedText: "",
                     translatedText: "",
                     wordTimingsJson: "",
@@ -2298,7 +2367,7 @@ Rectangle {
                         timeSec: timestamps[t0],
                         endSec: -1,
                         explicitEndSec: -1,
-                        rawText: "",
+                        rawText: bodyWithoutLineTags !== "" ? bodyWithoutLineTags : "Instrumental",
                         romanizedText: "",
                         translatedText: "",
                         wordTimingsJson: "",
@@ -2359,7 +2428,7 @@ Rectangle {
                     timeSec: timestamps[t],
                     endSec: -1,
                     explicitEndSec: (!isInst && explicitLineEndRelSec > 0) ? timestamps[t] + explicitLineEndRelSec : -1,
-                    rawText: isInst ? "" : cleanText,
+                    rawText: isInst ? (cleanText !== "" ? cleanText : "Instrumental") : cleanText,
                     romanizedText: instantRom,
                     translatedText: "",
                     wordTimingsJson: isInst ? "" : wordTimingsJson,
@@ -2377,6 +2446,8 @@ Rectangle {
             return
 
         root.lrcSourcePriority = priority
+        root.lyricsNotFound = false
+        root.isLoadingLyrics = false
         lyricModel.clear()
         const linesToQueue = []
         for (let j = 0; j < entries.length; j++) {
@@ -2485,6 +2556,7 @@ Rectangle {
                 root.displayedRomanized = ""
                 root.displayedTranslation = ""
                 root.isLoadingLyrics = false
+                root.lyricsNotFound = false
                 root.isInstrumentalLine = false
                 root.isExpanded = false
                 lyricModel.clear()
@@ -2512,6 +2584,7 @@ Rectangle {
             sessionActive = true
             currentRawLyric = ""
             isLoadingLyrics = true
+            lyricsNotFound = false
             isInstrumentalLine = false
             hasSyncedLrc = false
             lrcSourcePriority = 0
@@ -2551,7 +2624,7 @@ Rectangle {
         // berbentuk lirik sebelum ada timestamp vokal pertama.
         const pos = getCalibratedPositionSec()
         if (!root.hasSyncedLrc && pos < 1.25) {
-            transitionToText("", "", "", false, true)
+            transitionToText("Opening", "", "", false, true)
             return
         }
         const fallback = trackTitle !== "" ? ("♪ " + trackTitle) : "Memuat lirik..."
@@ -2624,7 +2697,7 @@ Rectangle {
             root.currentRawLyric = ""
             if (root.sessionActive || root.hasActivePlayer) {
                 root.isLoadingLyrics = false
-                transitionToText("", "", "", false, true)
+                transitionToText(newLine !== "" ? newLine : "Instrumental", "", "", false, true)
             }
             return
         }
@@ -2657,6 +2730,7 @@ Rectangle {
 
         root.currentRawLyric = newLine
         root.isLoadingLyrics = false
+        root.lyricsNotFound = false
         root.sessionActive = true
 
         const cached = root.lineCache[newLine]
@@ -2750,7 +2824,10 @@ Rectangle {
             property bool isInstrumental: false
             property real progress: 0.0
 
-            readonly property bool showSecondLine: !isInstrumental && root.showRomajiSubline && romanizedText !== "" && !isFallback
+            readonly property string displayRomaji: !isInstrumental && !root.showOriginalLanguage
+                ? root.romajiForDisplay(rawText, romanizedText)
+                : romanizedText
+            readonly property bool showSecondLine: !isInstrumental && root.showRomajiSubline && displayRomaji !== "" && !isFallback
             readonly property bool showThirdLine: !isInstrumental && root.showTranslate && translatedText !== "" && !isFallback
             // Baris asli tetap tampil bila semua baris lain mati/kosong agar pill tidak kosong.
             readonly property bool showFirstLine: !isInstrumental && (root.showOriginalLanguage || (!showSecondLine && !showThirdLine))
@@ -2759,8 +2836,8 @@ Rectangle {
             readonly property bool primaryIsTrans: !showFirstLine && !showSecondLine && showThirdLine
 
             // Warna Romaji diambil dari warna dominan cover album
-            readonly property color romajiActiveCol: Qt.lighter(root.effectiveAccentColor, 1.42)
-            readonly property color romajiDimCol: Qt.rgba(romajiActiveCol.r, romajiActiveCol.g, romajiActiveCol.b, 0.38)
+            readonly property color romajiActiveCol: root.romajiActiveColor
+            readonly property color romajiDimCol: root.romajiDimColor
 
             readonly property real maxContentW: isInstrumental
                 ? instrumentalRow.implicitWidth
@@ -2833,29 +2910,19 @@ Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                 }
 
-                Row {
-                    spacing: root.sp(4)
+                Text {
+                    text: root.instrumentalSectionLabel(lineItem.rawText)
+                    color: root.lyricActiveColor
+                    font.pixelSize: root.sp(12)
+                    font.weight: Font.DemiBold
                     anchors.verticalCenter: parent.verticalCenter
+                    opacity: 0.82
 
-                    Repeater {
-                        model: 3
-                        delegate: Rectangle {
-                            required property int index
-                            width: root.sp(4)
-                            height: root.sp(4)
-                            radius: root.sp(2)
-                            color: root.lyricActiveColor
-                            opacity: 0.45
-
-                            SequentialAnimation on opacity {
-                                running: lineItem.active && lineItem.isInstrumental && root.isPlaying
-                                loops: Animation.Infinite
-                                PauseAnimation { duration: index * 180 }
-                                NumberAnimation { to: 1.0; duration: 420; easing.type: Easing.InOutSine }
-                                NumberAnimation { to: 0.35; duration: 420; easing.type: Easing.InOutSine }
-                                PauseAnimation { duration: Math.max(0, (2 - index) * 180) }
-                            }
-                        }
+                    SequentialAnimation on opacity {
+                        running: lineItem.active && lineItem.isInstrumental && root.isPlaying
+                        loops: Animation.Infinite
+                        NumberAnimation { to: 1.0; duration: 700; easing.type: Easing.InOutSine }
+                        NumberAnimation { to: 0.55; duration: 700; easing.type: Easing.InOutSine }
                     }
                 }
             }
@@ -2909,7 +2976,7 @@ Rectangle {
 
                     Text {
                         id: romDimText
-                        text: lineItem.romanizedText
+                        text: lineItem.displayRomaji
                         width: parent.width
                         horizontalAlignment: root.lyricTextAlignment
                         color: lineItem.romajiDimCol
@@ -2927,7 +2994,7 @@ Rectangle {
                         clip: true
 
                         Text {
-                            text: lineItem.romanizedText
+                            text: lineItem.displayRomaji
                             width: romDimText.implicitWidth
                             color: lineItem.romajiActiveCol
                             font.pixelSize: root.sp(lineItem.primaryIsRomaji ? 14 : 12)
@@ -3755,7 +3822,11 @@ Rectangle {
                             spacing: 8
 
                             Text {
-                                text: root.isInstrumentalLine ? "󰎇   • • •   󰎇" : (root.displayedRawText !== "" ? root.displayedRawText : "Menunggu lirik...")
+                                text: root.isInstrumentalLine
+                                    ? ("󰎇   " + root.instrumentalSectionLabel(root.displayedRawText) + "   󰎇")
+                                    : (root.lyricsNotFound
+                                        ? Translation.tr("Lyric not found")
+                                        : (root.displayedRawText !== "" ? root.displayedRawText : "Menunggu lirik..."))
                                 color: root.isInstrumentalLine ? root.effectiveSliderColor : Qt.rgba(1, 1, 1, 0.72)
                                 font.pixelSize: root.isInstrumentalLine ? 18 : 15
                                 font.weight: Font.Bold
@@ -3803,7 +3874,10 @@ Rectangle {
                                 required property bool isInstrumental
 
                                 readonly property bool isCurrent: index === root.activeLyricIndex
-                                readonly property bool showSecondRom: !isInstrumental && root.showRomajiSubline && romanizedText !== ""
+                                readonly property string displayRomaji: !isInstrumental && !root.showOriginalLanguage
+                                    ? root.romajiForDisplay(rawText, romanizedText)
+                                    : romanizedText
+                                readonly property bool showSecondRom: !isInstrumental && root.showRomajiSubline && displayRomaji !== ""
                                 readonly property bool showThirdTrans: !isInstrumental && root.showTranslate && translatedText !== ""
                                 readonly property bool showFirstRaw: !isInstrumental && (root.showOriginalLanguage || (!showSecondRom && !showThirdTrans))
 
@@ -3837,7 +3911,7 @@ Rectangle {
                                     }
 
                                     Text {
-                                        text: "• • •"
+                                        text: root.instrumentalSectionLabel(rowDelegate.rawText)
                                         color: rowDelegate.isCurrent ? "#ffffff" : Qt.rgba(1, 1, 1, 0.55)
                                         font.pixelSize: 14
                                         font.weight: Font.Bold
@@ -3879,11 +3953,16 @@ Rectangle {
                                         font.pixelSize: rowDelegate.showFirstRaw ? 13 : 17
                                         font.weight: Font.DemiBold
                                         text: {
-                                            const activeHex = root.effectiveSliderColor.toString()
-                                            const dimHex = Qt.darker(root.effectiveAccentColor, 2.0).toString()
+                                            const activeHex = (root.useAlbumColor
+                                                ? root.effectiveSliderColor
+                                                : root.romajiActiveColor).toString()
+                                            const dimHex = (root.useAlbumColor
+                                                ? Qt.darker(root.effectiveAccentColor, 2.0)
+                                                : root.romajiDimColor).toString()
+                                            const romaji = rowDelegate.displayRomaji
                                             return rowDelegate.isCurrent
-                                                ? root.buildRichKaraokeText(rowDelegate.romanizedText, root.karaokeProgress, activeHex, dimHex)
-                                                : "<font color=\"" + activeHex + "\">" + root.escapeHtml(rowDelegate.romanizedText) + "</font>"
+                                                ? root.buildRichKaraokeText(romaji, root.karaokeProgress, activeHex, dimHex)
+                                                : "<font color=\"" + activeHex + "\">" + root.escapeHtml(romaji) + "</font>"
                                         }
                                     }
 
