@@ -875,7 +875,7 @@ Rectangle {
             root.isLoadingLyrics = false
             root.sessionActive = true
             root.karaokeProgress = 1.0
-            transitionToText("", "", "", false, true)
+            transitionToText(item.rawText && item.rawText !== "" ? item.rawText : "Instrumental", "", "", false, true)
             return
         }
 
@@ -1678,11 +1678,116 @@ Rectangle {
         youtubemusic: ctx => fetchYouTubeMusicLyrics(ctx, ctx.done)
     })
 
-    function fetchExternalLyrics(title, artist, album, durationSec) {
+    // Cache lintas lagu: begitu sebuah lagu pernah diambil, lirik lengkapnya
+    // langsung dipakai saat lagu itu diputar lagi tanpa menunggu jaringan.
+    property var lyricsPrefetchCache: ({})
+    property string activeLyricsCacheKey: ""
+    readonly property int maxCachedLyricsTracks: 32
+
+    function lyricsCacheKey(title, artist, album) {
+        return [
+            normalizeLyricMatchKey(title),
+            normalizeLyricMatchKey(artist),
+            normalizeLyricMatchKey(album)
+        ].join("|")
+    }
+
+    function readCachedLyrics(key) {
+        if (!key || key === "||")
+            return null
+        const memory = root.lyricsPrefetchCache[key]
+        if (memory && Array.isArray(memory.entries) && memory.entries.length > 0)
+            return memory
+
+        const stored = Persistent.states && Persistent.states.lyricCache
+            ? Persistent.states.lyricCache[key]
+            : null
+        if (!stored)
+            return null
+        try {
+            const payload = typeof stored === "string" ? JSON.parse(stored) : stored
+            if (payload && Array.isArray(payload.entries) && payload.entries.length > 0) {
+                root.lyricsPrefetchCache = Object.assign({}, root.lyricsPrefetchCache, {
+                    [key]: payload
+                })
+                return payload
+            }
+        } catch (e) {}
+        return null
+    }
+
+    function writeCachedLyrics(key, entries, priority) {
+        if (!key || key === "||" || !entries || entries.length === 0)
+            return
+        const previous = readCachedLyrics(key)
+        if (previous && (previous.priority || 0) > priority)
+            return
+
+        const payload = {
+            priority: priority || 0,
+            entries: entries,
+            savedAt: Date.now()
+        }
+        let memory = Object.assign({}, root.lyricsPrefetchCache)
+        memory[key] = payload
+
+        if (Persistent.ready) {
+            const current = Persistent.states.lyricCache
+            const cache = (current && typeof current === "object" && !Array.isArray(current))
+                ? Object.assign({}, current)
+                : {}
+            cache[key] = JSON.stringify(payload)
+            const keys = Object.keys(cache)
+            if (keys.length > root.maxCachedLyricsTracks) {
+                keys.slice(0, keys.length - root.maxCachedLyricsTracks).forEach(oldKey => {
+                    delete cache[oldKey]
+                    delete memory[oldKey]
+                })
+            }
+            Persistent.states.lyricCache = cache
+        }
+        root.lyricsPrefetchCache = memory
+    }
+
+    // Metadata MPRIS sering datang bertahap (judul dulu, durasi kemudian).
+    // Fetch ditunda sebentar supaya query tidak memakai metadata setengah jadi.
+    Timer {
+        id: lyricsPrefetchTimer
+        interval: 300
+        repeat: false
+        onTriggered: {
+            if (!root.currentTrackId || !root.trackTitle)
+                return
+            if (root.isLoadingLyrics)
+                return
+            if (root.hasSyncedLrc && root.lrcSourcePriority >= 2)
+                return
+            fetchExternalLyrics(root.trackTitle, root.trackArtist, root.trackAlbum,
+                root.trackDurationSec, root.lrcSourcePriority)
+        }
+    }
+
+    function prepareLyricsForCurrentTrack() {
+        if (!root.currentTrackId)
+            return
+        root.activeLyricsCacheKey = lyricsCacheKey(root.trackTitle, root.trackArtist, root.trackAlbum)
+        const cached = readCachedLyrics(root.activeLyricsCacheKey)
+        if (cached && cached.entries.length > 0) {
+            applyParsedLyricsToModel(cached.entries, cached.priority || 1, root.currentTrackId)
+            root.lyricsNotFound = false
+        } else {
+            showFallbackLine()
+        }
+        lyricsPrefetchTimer.restart()
+    }
+
+    function fetchExternalLyrics(title, artist, album, durationSec, minPriority) {
         if (!title)
             return
 
-        root.lrcSourcePriority = 0
+        lyricsPrefetchTimer.stop()
+        retryLyricsFetchTimer.stop()
+        root.lrcSourcePriority = minPriority || 0
         root.lyricsNotFound = false
         root.isLoadingLyrics = true
         const trackSnapshot = root.currentTrackId
@@ -1693,6 +1798,7 @@ Rectangle {
             album: album || "",
             durationSec: durationSec || 0,
             trackSnapshot: trackSnapshot,
+            cacheKey: lyricsCacheKey(title, artist, album),
             done: null,
             completed: false
         }
@@ -1703,32 +1809,59 @@ Rectangle {
     }
 
     property var lyricFetchContext: null
+    // Rantai sumber gagal di awal bisa diulang beberapa kali: penyedia sering
+    // baru punya data setelah lagu berjalan beberapa detik.
+    property int lyricFetchAttempt: 0
+    readonly property int maxLyricFetchAttempts: 2
+
+    Timer {
+        id: retryLyricsFetchTimer
+        interval: 8000
+        repeat: false
+        onTriggered: {
+            if (root.hasSyncedLrc || root.isLoadingLyrics)
+                return
+            if (!root.currentTrackId || root.currentTrackId !== root.lastFetchTrackId)
+                return
+            root.lyricFetchAttempt++
+            fetchExternalLyrics(root.trackTitle, root.trackArtist, root.trackAlbum,
+                root.trackDurationSec, root.lrcSourcePriority)
+        }
+    }
 
     function retryLyricsFetchIfNeeded() {
         const id = root.currentTrackId
         if (!id || id !== root.lastFetchTrackId)
             return
-        if (root.hasSyncedLrc || lyricModel.count > 0)
+        if (root.isLoadingLyrics)
+            return
+        if (root.hasSyncedLrc && root.lrcSourcePriority >= 2)
             return
         const dur = root.trackDurationSec
         if (Math.abs(dur - root.lastFetchDurationSec) < 0.5)
             return
-        fetchExternalLyrics(root.trackTitle, root.trackArtist, root.trackAlbum, dur)
+        fetchExternalLyrics(root.trackTitle, root.trackArtist, root.trackAlbum, dur,
+            root.lrcSourcePriority)
     }
 
     function markLyricsNotFound() {
         if (!root.sessionActive && !root.hasActivePlayer)
             return
-        if (root.hasSyncedLrc || lyricModel.count > 0)
-            return
         root.isLoadingLyrics = false
-        root.lyricsNotFound = true
+        if (!root.hasSyncedLrc && lyricModel.count === 0)
+            root.lyricsNotFound = true
+        // Baris live sptlrx tidak menghalangi pencarian ulang: begitu sumber
+        // lain berhasil, model akan ditimpa lirik tersinkron yang baru.
+        if (!root.hasSyncedLrc && root.lyricFetchAttempt < root.maxLyricFetchAttempts) {
+            retryLyricsFetchTimer.stop()
+            retryLyricsFetchTimer.restart()
+        }
     }
 
     function tryLyricProvider(index, order, ctx) {
         if (!ctx || ctx.completed || ctx.trackSnapshot && root.currentTrackId !== ctx.trackSnapshot)
             return
-        if (root.hasSyncedLrc || lyricModel.count > 0)
+        if (root.hasSyncedLrc)
             return
         if (index >= order.length) {
             markLyricsNotFound()
@@ -1774,6 +1907,8 @@ Rectangle {
             if (done) done(false, priority)
             return false
         }
+        writeCachedLyrics(ctx.cacheKey || lyricsCacheKey(ctx.title, ctx.artist, ctx.album),
+            entries, priority)
         applyParsedLyricsToModel(entries, priority, ctx.trackSnapshot)
         if (done) done(true, priority)
         return true
@@ -2445,6 +2580,7 @@ Rectangle {
         if (!entries || entries.length === 0 || root.currentTrackId !== trackSnapshot)
             return
 
+        retryLyricsFetchTimer.stop()
         root.lrcSourcePriority = priority
         root.lyricsNotFound = false
         root.isLoadingLyrics = false
@@ -2538,7 +2674,9 @@ Rectangle {
             keepAliveTimer.stop()
             sessionActive = true
             syncClockAnchor(true)
-            if (displayedRawText === "" && !isInstrumentalLine)
+            if (!root.hasSyncedLrc && root.currentTrackId !== "")
+                prepareLyricsForCurrentTrack()
+            else if (displayedRawText === "" && !isInstrumentalLine)
                 showFallbackLine()
         } else {
             keepAliveTimer.restart()
@@ -2557,6 +2695,8 @@ Rectangle {
                 root.displayedTranslation = ""
                 root.isLoadingLyrics = false
                 root.lyricsNotFound = false
+                root.lyricFetchAttempt = 0
+                retryLyricsFetchTimer.stop()
                 root.isInstrumentalLine = false
                 root.isExpanded = false
                 lyricModel.clear()
@@ -2585,6 +2725,8 @@ Rectangle {
             currentRawLyric = ""
             isLoadingLyrics = true
             lyricsNotFound = false
+            lyricFetchAttempt = 0
+            retryLyricsFetchTimer.stop()
             isInstrumentalLine = false
             hasSyncedLrc = false
             lrcSourcePriority = 0
@@ -2614,8 +2756,7 @@ Rectangle {
             detectedTrackLanguage = ""
             lyricModel.clear()
             syncClockAnchor(true)
-            showFallbackLine()
-            fetchExternalLyrics(trackTitle, trackArtist, trackAlbum, root.trackDurationSec)
+            prepareLyricsForCurrentTrack()
         }
     }
 
@@ -2804,8 +2945,7 @@ Rectangle {
             isLoadingLyrics = true
             trackChangeWallMs = Date.now()
             syncClockAnchor(true)
-            showFallbackLine()
-            fetchExternalLyrics(trackTitle, trackArtist, trackAlbum, root.trackDurationSec)
+            prepareLyricsForCurrentTrack()
             extractColorsFromArt(albumArtUrl)
         }
     }

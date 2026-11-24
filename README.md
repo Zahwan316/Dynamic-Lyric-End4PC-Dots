@@ -95,6 +95,9 @@ Behavior:
 
 - each request has a timeout and a stale-track guard;
 - HTTP errors, timeouts, empty/invalid payloads, or lower-priority results fall through to the next provider;
+- fetched lyrics are cached by normalized title/artist/album (up to 32 tracks) and reused instantly when that track is played again, including after a shell restart;
+- fetching is scheduled as soon as MPRIS metadata appears (300ms debounce) instead of waiting for playback to start, so the complete lyric list is ready before the first vocal line;
+- if every provider fails at the start of a track, the whole chain is retried twice (8s apart); live fallback lines from the player do not block the retry, and are replaced by synced lyrics as soon as a provider succeeds;
 - word-timed results (enhanced LRC/YRC) outrank plain line-timed LRC.
 
 ### Provider requirements

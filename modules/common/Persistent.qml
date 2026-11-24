@@ -79,6 +79,10 @@ Singleton {
                 property string provider: "yandere"
             }
 
+            // Cache lirik tersinkron per lagu. Nilainya string JSON agar
+            // seluruh baris (termasuk word timing) tersimpan apa adanya.
+            property var lyricCache: ({})
+
             property JsonObject idle: JsonObject {
                 property bool inhibit: false
             }
