@@ -104,11 +104,11 @@ Rectangle {
     property color albumSliderColor: "#b8b8b8"
     property string lastExtractedArtUrl: ""
 
-    Behavior on albumAccentColor { ColorAnimation { duration: 420 } }
-    Behavior on albumGlowColor { ColorAnimation { duration: 480 } }
-    Behavior on albumButtonFill { ColorAnimation { duration: 420 } }
-    Behavior on albumButtonBorder { ColorAnimation { duration: 420 } }
-    Behavior on albumSliderColor { ColorAnimation { duration: 420 } }
+    Behavior on albumAccentColor { ColorAnimation { duration: 560; easing.type: Easing.InOutQuad } }
+    Behavior on albumGlowColor { ColorAnimation { duration: 640; easing.type: Easing.InOutQuad } }
+    Behavior on albumButtonFill { ColorAnimation { duration: 520; easing.type: Easing.InOutQuad } }
+    Behavior on albumButtonBorder { ColorAnimation { duration: 520; easing.type: Easing.InOutQuad } }
+    Behavior on albumSliderColor { ColorAnimation { duration: 520; easing.type: Easing.InOutQuad } }
 
     // Warna pakai hasil ekstraksi cover hanya saat toggle album color aktif.
     // Saat nonaktif, aksen tetap netral abu-abu agar kontras teks terjaga.
@@ -211,7 +211,7 @@ Rectangle {
     // -1 = lirik baru turun dari atas (dipakai saat mundur/seek).
     property int lyricSlideDirection: 1
     property int lastAnimatedLyricIndex: -1
-    readonly property real compactSlideDistance: 10
+    readonly property real compactSlideDistance: root.sp(11)
     readonly property bool compactSlideEnabled: !root.isExpanded && root.morphProgress < 0.08
 
     property bool hasSyncedLrc: false
@@ -446,9 +446,9 @@ Rectangle {
         target: root
         property: "morphProgress"
         to: 1.0
-        duration: 460
+        duration: 520
         easing.type: Easing.OutBack
-        easing.overshoot: 1.38
+        easing.overshoot: 1.16
     }
 
     NumberAnimation {
@@ -456,8 +456,8 @@ Rectangle {
         target: root
         property: "morphProgress"
         to: 0.0
-        duration: 280
-        easing.type: Easing.OutCubic
+        duration: 340
+        easing.type: Easing.OutQuint
     }
 
     onIsExpandedChanged: {
@@ -2917,36 +2917,86 @@ Rectangle {
         }
     }
 
-    // --- Sumber lirik: Sonora ---
-    // `sonora lyrics --json` membaca sheet lirik yang sedang dipakai Sonora
-    // tanpa mencari ulang. Responsnya memuat seluruh baris tersinkron,
-    // baris aktif/berikutnya, status instrumental, dan romaji.
-    function handleSonoraLyrics(raw) {
-        if (!raw || !root.hasActivePlayer)
-            return
-        if (root.activePlayerName.indexOf("sonora") === -1)
-            return
+    // --- Sumber lirik utama: aplikasi musik yang sedang aktif ---
+    // Sonora dibaca lewat bridge CLI + cache (ada word timing asli).
+    // Player lain: metadata lyrics / .lrc lokal dipakai lebih dulu, lalu
+    // rantai penyedia lama menjadi alternatif bila keduanya tidak ada.
+    readonly property bool activePlayerIsSonora: root.activePlayerName.indexOf("sonora") !== -1
+    property string nativeLrcAttemptedTrackId: ""
 
-        let data = null
-        try {
-            data = JSON.parse(raw.trim())
-        } catch (e) {
+    function applyNativeLyricsEntries(entries, priority) {
+        if (!entries || entries.length === 0 || root.lrcSourcePriority >= priority)
             return
+        root.applyParsedLyricsToModel(entries, priority, root.currentTrackId)
+        root.writeCachedLyrics(
+            root.lyricsCacheKey(root.trackTitle, root.trackArtist, root.trackAlbum),
+            entries, priority)
+    }
+
+    function sonoraWordMap(words) {
+        const map = ({})
+        const list = Array.isArray(words) ? words : []
+        for (let i = 0; i < list.length; i++) {
+            const item = list[i] || {}
+            const key = String(Math.round(Number(item.start_ms)))
+            if (Array.isArray(item.words))
+                map[key] = item.words
         }
-        if (!data || typeof data !== "object")
-            return
+        return map
+    }
 
+    // Word timing bisa datang setelah baris lirik dipasang. Patch ini
+    // mengisi ulang model tanpa mengulang transisi/animasi baris.
+    function patchKaraokeWordTimings(words) {
+        const map = root.sonoraWordMap(words)
+        if (Object.keys(map).length === 0)
+            return
+        let changed = false
+        for (let i = 0; i < lyricModel.count; i++) {
+            const item = lyricModel.get(i)
+            if (item.wordTimingsJson && item.wordTimingsJson !== "")
+                continue
+            const key = String(Math.round(item.timeSec * 1000.0))
+            if (map[key]) {
+                lyricModel.setProperty(i, "wordTimingsJson", JSON.stringify(map[key]))
+                changed = true
+            }
+        }
+        if (!changed)
+            return
+        const idx = root.activeLyricIndex
+        if (idx >= 0 && idx < lyricModel.count) {
+            const active = lyricModel.get(idx)
+            if (active.wordTimingsJson && active.wordTimingsJson !== "") {
+                try {
+                    root.activeWordTimings = JSON.parse(active.wordTimingsJson)
+                } catch (e) {}
+            }
+        }
+        const entries = []
+        for (let j = 0; j < lyricModel.count; j++)
+            entries.push(lyricModel.get(j))
+        root.writeCachedLyrics(
+            root.lyricsCacheKey(root.trackTitle, root.trackArtist, root.trackAlbum),
+            entries, Math.max(5, root.lrcSourcePriority))
+    }
+
+    function handleActivePlayerLyrics(payload) {
+        if (!payload || typeof payload !== "object" || !root.hasActivePlayer)
+            return
+        const data = (payload.lyrics && typeof payload.lyrics === "object") ? payload.lyrics : payload
         const trackId = root.currentTrackId
         if (!trackId)
             return
 
+        const wordMap = root.sonoraWordMap(payload.words)
         const state = String(data.state || "").toLowerCase()
         if (state === "instrumental" || data.instrumental === true) {
             root.updateLyricLine(Translation.tr("Instrumental"))
             return
         }
-        // Sonora belum punya jawaban: biarkan rantai fallback lama yang
-        // menampilkan "Lyric not found" atau mencari dari penyedia lain.
+        // Player belum punya jawaban: biarkan rantai fallback yang menampilkan
+        // "Lyric not found" atau mencari dari penyedia lain.
         if (state !== "ready" && state !== "")
             return
 
@@ -2963,6 +3013,7 @@ Rectangle {
                     continue
                 const nextMs = (i + 1 < lines.length) ? Number(lines[i + 1]?.start_ms) : NaN
                 const endSec = (isFinite(nextMs) && nextMs > startMs) ? nextMs / 1000.0 : -1
+                const timing = wordMap[String(Math.round(startMs))]
                 entries.push({
                     timeSec: startMs / 1000.0,
                     endSec: endSec,
@@ -2970,17 +3021,13 @@ Rectangle {
                     rawText: text,
                     romanizedText: String(line.romanized || ""),
                     translatedText: "",
-                    wordTimingsJson: "",
+                    wordTimingsJson: timing ? JSON.stringify(timing) : "",
                     isInstrumental: false
                 })
             }
-            if (entries.length > 0) {
-                root.applyParsedLyricsToModel(entries, 5, trackId)
-                root.writeCachedLyrics(
-                    root.lyricsCacheKey(root.trackTitle, root.trackArtist, root.trackAlbum),
-                    entries, 5)
-            }
+            root.applyNativeLyricsEntries(entries, 5)
         }
+        root.patchKaraokeWordTimings(payload.words)
 
         const current = data.current || null
         const currentText = current && typeof current.text === "string" ? current.text.trim() : ""
@@ -2988,30 +3035,97 @@ Rectangle {
             root.updateLyricLine(currentText)
     }
 
-    Process {
-        id: sonoraLyricsProc
-        command: ["sonora", "lyrics", "--json"]
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: root.handleSonoraLyrics(text)
+    function metadataLyricsText() {
+        const md = root.activePlayer ? root.activePlayer.metadata : null
+        if (!md)
+            return ""
+        const keys = ["xesam:lyrics", "mpris:lyrics", "lyrics"]
+        for (let i = 0; i < keys.length; i++) {
+            const value = md[keys[i]]
+            if (typeof value === "string" && value.trim() !== "")
+                return value
         }
-        onExited: (exitCode, exitStatus) => {
-            sonoraLyricsPollTimer.start()
+        return ""
+    }
+
+    function localLrcPath(rawUrl) {
+        if (!rawUrl || rawUrl.indexOf("file://") !== 0)
+            return ""
+        let path = rawUrl.slice(7)
+        try {
+            path = decodeURIComponent(path)
+        } catch (e) {}
+        const dot = path.lastIndexOf(".")
+        if (dot <= 0)
+            return ""
+        return path.slice(0, dot) + ".lrc"
+    }
+
+    function tryActivePlayerNativeLyrics() {
+        if (!root.hasActivePlayer || root.activePlayerIsSonora)
+            return
+        const metadataText = root.metadataLyricsText()
+        if (metadataText !== "" && root.lrcSourcePriority < 5) {
+            root.applyNativeLyricsEntries(root.parseLrcToEntries(metadataText), 5)
+            return
+        }
+        const md = root.activePlayer ? root.activePlayer.metadata : null
+        const url = (md && md["xesam:url"]) ? String(md["xesam:url"]) : ""
+        const path = root.localLrcPath(url)
+        if (path !== "" && root.nativeLrcAttemptedTrackId !== root.currentTrackId) {
+            root.nativeLrcAttemptedTrackId = root.currentTrackId
+            localLrcProc.command = ["cat", path]
+            localLrcProc.running = true
         }
     }
 
-    // CLI Sonora bersifat snapshot, jadi dibaca berkala untuk mengikuti
+    Process {
+        id: sonoraBridgeProc
+        command: ["python3", `${Directories.scriptPath}/lyrics/sonora_bridge.py`,
+            String(Directories.genericCache).replace("file://", "") + "/sonora/cache.sqlite"]
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                let payload = null
+                try {
+                    payload = JSON.parse(text.trim())
+                } catch (e) {
+                    return
+                }
+                root.handleActivePlayerLyrics(payload)
+            }
+        }
+        onExited: (exitCode, exitStatus) => nativeLyricsPollTimer.start()
+    }
+
+    Process {
+        id: localLrcProc
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                if (root.activePlayerIsSonora || root.lrcSourcePriority >= 5)
+                    return
+                root.applyNativeLyricsEntries(root.parseLrcToEntries(text), 5)
+            }
+        }
+    }
+
+    // Sumber asli bersifat snapshot, jadi dibaca berkala untuk mengikuti
     // baris aktif. Pergantian lagu ditangani lewat currentTrackId.
     Timer {
-        id: sonoraLyricsPollTimer
+        id: nativeLyricsPollTimer
         interval: 400
         repeat: true
         running: true
         onTriggered: {
-            if (!root.hasActivePlayer || root.activePlayerName.indexOf("sonora") === -1)
+            if (!root.hasActivePlayer)
                 return
-            if (!sonoraLyricsProc.running)
-                sonoraLyricsProc.running = true
+            if (root.activePlayerIsSonora) {
+                if (!sonoraBridgeProc.running)
+                    sonoraBridgeProc.running = true
+            } else {
+                root.tryActivePlayerNativeLyrics()
+            }
         }
     }
 
@@ -3079,6 +3193,8 @@ Rectangle {
             clip: true
 
             opacity: active ? (isFallback && root.isLoadingLyrics ? pulseOpacity : 1.0) : 0.0
+            scale: active ? 1.0 : 0.985
+            transformOrigin: Item.Center
             y: 0
 
             // Dinyaktifkan sebentar saat slot disiapkan agar lompatan posisi
@@ -3095,21 +3211,30 @@ Rectangle {
             }
 
             Behavior on opacity {
+                enabled: !(lineItem.active && lineItem.isFallback && root.isLoadingLyrics)
                 NumberAnimation {
-                    duration: 260
-                    easing.type: Easing.InOutCubic
+                    duration: 320
+                    easing.type: Easing.InOutQuint
+                }
+            }
+
+            Behavior on scale {
+                NumberAnimation {
+                    duration: 320
+                    easing.type: Easing.InOutQuint
                 }
             }
 
             Behavior on y {
                 enabled: lineItem.slideReady
                 NumberAnimation {
-                    duration: 260
-                    easing.type: Easing.InOutCubic
+                    duration: 320
+                    easing.type: Easing.InOutQuint
                 }
             }
 
-            readonly property real panRatio: Math.max(0, Math.min(1, (progress - 0.12) / 0.80))
+            readonly property real easedProgress: root.easeInOutKaraoke(progress)
+            readonly property real panRatio: Math.max(0, Math.min(1, (easedProgress - 0.12) / 0.80))
             readonly property real origOverflow: Math.max(0, origDimText.implicitWidth - root.maxCompactLyricWidth)
             readonly property real romOverflow: Math.max(0, romDimText.implicitWidth - root.maxCompactLyricWidth)
 
@@ -3172,7 +3297,7 @@ Rectangle {
                         x: lineItem.alignedX(origDimText.implicitWidth)
                         anchors.top: origDimText.top
                         anchors.bottom: origDimText.bottom
-                        width: origDimText.implicitWidth * lineItem.progress
+                        width: origDimText.implicitWidth * lineItem.easedProgress
                         clip: true
 
                         Text {
@@ -3207,7 +3332,7 @@ Rectangle {
                         x: lineItem.alignedX(romDimText.implicitWidth)
                         anchors.top: romDimText.top
                         anchors.bottom: romDimText.bottom
-                        width: romDimText.implicitWidth * lineItem.progress
+                        width: romDimText.implicitWidth * lineItem.easedProgress
                         clip: true
 
                         Text {
@@ -3612,6 +3737,10 @@ Rectangle {
                                 mipmap: true
                                 cache: true
                                 opacity: (root.albumArtUrl !== "" && status !== Image.Error) ? 1.0 : 0.0
+
+                                Behavior on opacity {
+                                    NumberAnimation { duration: 300; easing.type: Easing.InOutQuad }
+                                }
                             }
 
                             Text {
@@ -3706,12 +3835,25 @@ Rectangle {
 
                                 // Soft Glow di belakang bar aktif
                                 Rectangle {
+                                    id: sliderGlow
                                     anchors.verticalCenter: parent.verticalCenter
                                     x: -2
                                     width: (parent.width * customSliderContainer.progressRatio) + 4
                                     height: customSliderContainer.hoveredOrPressed ? 12 : 8
                                     radius: height / 2
-                                    color: Qt.rgba(root.effectiveSliderColor.r, root.effectiveSliderColor.g, root.effectiveSliderColor.b, customSliderContainer.hoveredOrPressed ? 0.32 : 0.16)
+                                    property real glowPulse: 1.0
+                                    color: Qt.rgba(root.effectiveSliderColor.r,
+                                        root.effectiveSliderColor.g,
+                                        root.effectiveSliderColor.b,
+                                        (customSliderContainer.hoveredOrPressed ? 0.32 : 0.16) * sliderGlow.glowPulse)
+
+                                    SequentialAnimation on glowPulse {
+                                        running: root.isExpanded && root.isPlaying && !customSliderContainer.hoveredOrPressed
+                                        loops: Animation.Infinite
+                                        NumberAnimation { to: 1.28; duration: 1600; easing.type: Easing.InOutSine }
+                                        NumberAnimation { to: 1.0; duration: 1600; easing.type: Easing.InOutSine }
+                                        onRunningChanged: if (!running) sliderGlow.glowPulse = 1.0
+                                    }
 
                                     Behavior on height {
                                         NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
