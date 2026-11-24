@@ -148,6 +148,7 @@ def main():
         "lyrics": lyrics,
         "position": position,
         "trackId": track_id,
+        "trackTitle": str(track.get("title") or ""),
         "words": word_timings(hit) if hit else [],
     }
     print(json.dumps(payload, separators=(",", ":")))

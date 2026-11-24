@@ -2723,45 +2723,86 @@ Rectangle {
         }
     }
 
+    // Bersihkan semua jejak lagu sebelumnya, termasuk slot compact yang
+    // menampilkan teks. Model saja tidak cukup: slot bisa menyimpan lirik lama
+    // sampai fetch lagu baru selesai.
+    function resetLyricsForTrackChange() {
+        keepAliveTimer.stop()
+        confirmSeekTimer.stop()
+        sessionActive = true
+        currentRawLyric = ""
+        displayedRawText = ""
+        displayedRomanized = ""
+        displayedTranslation = ""
+        isFallbackLine = true
+        isInstrumentalLine = false
+        isLoadingLyrics = true
+        lyricsNotFound = false
+        lyricFetchAttempt = 0
+        retryLyricsFetchTimer.stop()
+        hasSyncedLrc = false
+        lrcSourcePriority = 0
+        activeLyricIndex = -1
+        activeLineStartSec = 0.0
+        activeLineDurationSec = 3.0
+        activeWordTimings = []
+        lineCache = ({})
+        translationQueue = []
+        queuedSet = ({})
+        isTranslatingNow = false
+        activeQueueTrackId = currentTrackId
+        activeLyricsCacheKey = ""
+        lyricFetchContext = null
+        lastFetchTrackId = ""
+        nativeLrcAttemptedTrackId = ""
+        nativeBridgeRequestedTrackId = ""
+        nativeLrcPendingTrackId = ""
+        lastAnimatedLyricIndex = -1
+        lyricSlideDirection = 1
+        trackChangeWallMs = Date.now()
+        posQueryTrackId = currentTrackId
+        pendingJumpPos = -1.0
+        movingPosTicks = 0
+        lastReportedPos = -1.0
+        anchorPlayerPos = 0.0
+        anchorWallMs = Date.now()
+        fallbackTrackLengthSec = 0.0
+        sliderDisplayPosSec = 0.0
+        karaokeProgress = 0.0
+        lastFallbackLineMs = 0
+        lastFallbackCharCount = 0
+        adaptiveMsPerChar = 72.0
+        lastLiveLineWallMs = 0.0
+        lastFetchDurationSec = -1.0
+        detectedTrackLanguage = ""
+        lyricModel.clear()
+
+        // Matikan kedua slot sebelum transisi baru supaya tidak ada teks lama
+        // yang ikut tersisa saat crossfade.
+        const slotA = slotALoader.item
+        const slotB = slotBLoader.item
+        if (slotA) {
+            slotA.slideReady = false
+            slotA.active = false
+            slotA.rawText = ""
+            slotA.romanizedText = ""
+            slotA.translatedText = ""
+        }
+        if (slotB) {
+            slotB.slideReady = false
+            slotB.active = false
+            slotB.rawText = ""
+            slotB.romanizedText = ""
+            slotB.translatedText = ""
+        }
+
+        syncClockAnchor(true)
+        showFallbackLine()
+    }
+
     onCurrentTrackIdChanged: {
         if (currentTrackId !== "") {
-            keepAliveTimer.stop()
-            confirmSeekTimer.stop()
-            sessionActive = true
-            currentRawLyric = ""
-            isLoadingLyrics = true
-            lyricsNotFound = false
-            lyricFetchAttempt = 0
-            retryLyricsFetchTimer.stop()
-            isInstrumentalLine = false
-            hasSyncedLrc = false
-            lrcSourcePriority = 0
-            activeLyricIndex = -1
-            activeWordTimings = []
-            lineCache = ({})
-            translationQueue = []
-            queuedSet = ({})
-            isTranslatingNow = false
-            activeQueueTrackId = currentTrackId
-            trackChangeWallMs = Date.now()
-            posQueryTrackId = currentTrackId
-            pendingJumpPos = -1.0
-            movingPosTicks = 0
-            lastReportedPos = -1.0
-            anchorPlayerPos = 0.0
-            anchorWallMs = Date.now()
-            fallbackTrackLengthSec = 0.0
-            sliderDisplayPosSec = 0.0
-            karaokeProgress = 0.0
-            lastFallbackLineMs = 0
-            lastFallbackCharCount = 0
-            adaptiveMsPerChar = 72.0
-            lastLiveLineWallMs = 0.0
-            lastFetchDurationSec = -1.0
-            lastFetchTrackId = ""
-            detectedTrackLanguage = ""
-            lyricModel.clear()
-            syncClockAnchor(true)
+            resetLyricsForTrackChange()
             prepareLyricsForCurrentTrack()
         }
     }
@@ -2926,7 +2967,26 @@ Rectangle {
     // Player lain: metadata lyrics / .lrc lokal dipakai lebih dulu, lalu
     // rantai penyedia lama menjadi alternatif bila keduanya tidak ada.
     readonly property bool activePlayerIsSonora: root.activePlayerName.indexOf("sonora") !== -1
+    // Sonora memakai id video sebagai track id. MPRIS Sonora menyimpannya di
+    // xesam:url (?v=...), jadi ini dipakai untuk membuang jawaban lama.
+    readonly property string expectedNativeTrackId: {
+        if (!root.activePlayer)
+            return ""
+        const raw = String(root.activePlayer.metadata?.["xesam:url"] || "")
+        const match = raw.match(/[?&]v=([^&#]+)/)
+        if (match) {
+            try {
+                return decodeURIComponent(match[1])
+            } catch (e) {
+                return match[1]
+            }
+        }
+        const clean = raw.split("?")[0].replace(/\/$/, "")
+        return clean.slice(clean.lastIndexOf("/") + 1)
+    }
     property string nativeLrcAttemptedTrackId: ""
+    property string nativeBridgeRequestedTrackId: ""
+    property string nativeLrcPendingTrackId: ""
 
     function applyNativeLyricsEntries(entries, priority) {
         if (!entries || entries.length === 0 || root.lrcSourcePriority >= priority)
@@ -2992,6 +3052,22 @@ Rectangle {
         const trackId = root.currentTrackId
         if (!trackId)
             return
+
+        // Jawaban process yang masih berjalan saat lagu berganti harus dibuang.
+        // Tanpa ini, sheet lirik lagu lama bisa dipasang ke lagu baru.
+        if (root.nativeBridgeRequestedTrackId !== ""
+            && root.nativeBridgeRequestedTrackId !== trackId)
+            return
+        if (root.activePlayerIsSonora) {
+            const reportedId = String(payload.trackId || "")
+            const reportedTitle = String(payload.trackTitle || "")
+            if (root.expectedNativeTrackId !== "" && reportedId !== ""
+                && reportedId !== root.expectedNativeTrackId)
+                return
+            if (reportedTitle !== "" && root.trackTitle !== ""
+                && reportedTitle !== root.trackTitle)
+                return
+        }
 
         const wordMap = root.sonoraWordMap(payload.words)
         const state = String(data.state || "").toLowerCase()
@@ -3078,6 +3154,7 @@ Rectangle {
         const path = root.localLrcPath(url)
         if (path !== "" && root.nativeLrcAttemptedTrackId !== root.currentTrackId) {
             root.nativeLrcAttemptedTrackId = root.currentTrackId
+            root.nativeLrcPendingTrackId = root.currentTrackId
             localLrcProc.command = ["cat", path]
             localLrcProc.running = true
         }
@@ -3109,6 +3186,9 @@ Rectangle {
             onStreamFinished: {
                 if (root.activePlayerIsSonora || root.lrcSourcePriority >= 5)
                     return
+                if (root.nativeLrcPendingTrackId !== ""
+                    && root.nativeLrcPendingTrackId !== root.currentTrackId)
+                    return
                 root.applyNativeLyricsEntries(root.parseLrcToEntries(text), 5)
             }
         }
@@ -3125,8 +3205,10 @@ Rectangle {
             if (!root.hasActivePlayer)
                 return
             if (root.activePlayerIsSonora) {
-                if (!sonoraBridgeProc.running)
+                if (!sonoraBridgeProc.running) {
+                    root.nativeBridgeRequestedTrackId = root.currentTrackId
                     sonoraBridgeProc.running = true
+                }
             } else {
                 root.tryActivePlayerNativeLyrics()
             }
