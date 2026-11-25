@@ -62,9 +62,9 @@ Rectangle {
     // sudut bawah membulat. Floating island hanya digeser sedikit dari tepi atas.
     readonly property bool notchAtTop: !Config.options.bar.bottom
     readonly property int barCornerStyle: Config.options.bar.cornerStyle ?? 0
-    // Islands tidak punya permukaan bar yang menyambung, jadi pakai siluet
-    // pill penuh. Style lain tetap memakai notch yang menempel ke bar.
-    readonly property bool notchSilhouette: !root.isFloatingIsland && root.barCornerStyle !== 2
+    // Semua style bar non-floating memakai siluet notch yang sama seperti
+    // sebelumnya, termasuk Islands.
+    readonly property bool notchSilhouette: !root.isFloatingIsland
     // Notch Mac: bahu cekung di tepi bar, badan lebih sempit,
     // lalu sudut bawah membulat.
     readonly property int notchShoulderInset: Math.round(root.sp(22))

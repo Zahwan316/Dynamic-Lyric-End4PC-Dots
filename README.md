@@ -39,8 +39,8 @@ The compact pill is drawn as a custom shape:
 - the body is narrower, with rounded bottom corners;
 - when `useAlbumColor` is enabled, a dark gradient tinted from the album accent color fills the shape;
 - on a bottom bar the shape is mirrored vertically;
-- the pull-to-edge offset follows the visible bar surface: `40 px` for Hug/M3/Float and `44 px` for M3 Hug, Panel and Split Hug (Float's outer window is taller but its background is inset by the gap);
-- the **Islands** bar style uses the fully rounded pill instead of a notch, because there is no continuous bar edge to attach to.
+- the pull-to-edge offset follows the visible bar surface: `40 px` for Hug/M3/Float/Islands and `44 px` for M3 Hug, Panel and Split Hug (Float's outer window is taller but its background is inset by the gap);
+- the Islands bar style keeps the same notch silhouette as the other non-floating styles.
 
 ### `floating` / `floating-island`
 
