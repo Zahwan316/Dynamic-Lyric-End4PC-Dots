@@ -61,6 +61,10 @@ Rectangle {
     // Kedua mode memakai siluet notch: hitam, leher rata di tepi layar/bar,
     // sudut bawah membulat. Floating island hanya digeser sedikit dari tepi atas.
     readonly property bool notchAtTop: !Config.options.bar.bottom
+    readonly property int barCornerStyle: Config.options.bar.cornerStyle ?? 0
+    // Islands tidak punya permukaan bar yang menyambung, jadi pakai siluet
+    // pill penuh. Style lain tetap memakai notch yang menempel ke bar.
+    readonly property bool notchSilhouette: !root.isFloatingIsland && root.barCornerStyle !== 2
     // Notch Mac: bahu cekung di tepi bar, badan lebih sempit,
     // lalu sudut bawah membulat.
     readonly property int notchShoulderInset: Math.round(root.sp(22))
@@ -79,12 +83,14 @@ Rectangle {
     // BarGroup mengapungkan widget di tengah bar. Untuk notch 1 baris yang
     // lebih pendek dari bar, celah 1-2 px membuat siluet terlihat mengambang:
     // tarik ke tepi bar (atas/bawah sesuai posisi bar) sampai mentok.
-    readonly property int notchEdgeYOffset: (!root.isFloatingIsland
+    readonly property real notchSurfaceHeight: Appearance.sizes.barHeight
+        - (root.barCornerStyle === 1 ? Appearance.sizes.hyprlandGapsOut * 2 : 0)
+    readonly property int notchEdgeYOffset: (root.notchSilhouette
         && !Config.options.bar.vertical
         && root.currentTierCount === 1
         && !root.isExpanded
         && root.morphProgress <= 0.01)
-        ? (root.notchAtTop ? -1 : 1) * Math.max(0, Math.round((Appearance.sizes.baseBarHeight - root.height) / 2))
+        ? (root.notchAtTop ? -1 : 1) * Math.max(0, Math.round((root.notchSurfaceHeight - root.height) / 2))
         : 0
     property int yOffset: root.notchEdgeYOffset
 
@@ -443,6 +449,8 @@ Rectangle {
 
     onXChanged: if (!isExpanded && morphProgress <= 0.01) updatePopupAnchor()
     onWidthChanged: if (!isExpanded && morphProgress <= 0.01) updatePopupAnchor()
+    onHeightChanged: if (!isExpanded && morphProgress <= 0.01) updatePopupAnchor()
+    onYChanged: if (!isExpanded && morphProgress <= 0.01) updatePopupAnchor()
     onYOffsetChanged: updatePopupAnchor()
 
     NumberAnimation {
@@ -516,7 +524,7 @@ Rectangle {
 
     readonly property real compactTargetWidth: isIslandVisible
         ? Math.max(root.sp(96), (currentTierCount >= 3 ? root.sp(30) : root.sp(26)) + currentTextWidth + root.sp(36) + root.sp(34))
-            + (isFloatingIsland ? 0 : notchShoulderInset * 2)
+            + (root.notchSilhouette ? notchShoulderInset * 2 : 0)
         : root.sp(36)
     readonly property real compactTargetHeight: {
         if (!isIslandVisible)
@@ -1783,7 +1791,12 @@ Rectangle {
             return
         root.activeLyricsCacheKey = lyricsCacheKey(root.trackTitle, root.trackArtist, root.trackAlbum)
         const cached = readCachedLyrics(root.activeLyricsCacheKey)
-        if (cached && cached.entries.length > 0) {
+        // Cache priority 5 berasal dari lirik native Sonora. Saat player
+        // berganti ke yang lain, cache itu tidak boleh dipakai: LRCLIB harus
+        // langsung menjadi satu-satunya sumber eksternal.
+        const cachedUsable = cached && cached.entries.length > 0
+            && (root.activePlayerIsSonora || (cached.priority || 1) < 5)
+        if (cachedUsable) {
             applyParsedLyricsToModel(cached.entries, cached.priority || 1, root.currentTrackId)
             root.lyricsNotFound = false
         } else {
@@ -1802,7 +1815,11 @@ Rectangle {
         root.lyricsNotFound = false
         root.isLoadingLyrics = true
         const trackSnapshot = root.currentTrackId
-        const order = Config.options.bar.lyricsWidget?.sourceOrder || []
+        // Sonora memakai sheet liriknya sendiri + rantai fallback bawaan.
+        // Untuk player lain, permintaan langsung ditujukan ke LRCLIB saja.
+        const order = root.activePlayerIsSonora
+            ? (Config.options.bar.lyricsWidget?.sourceOrder || [])
+            : ["lrclib"]
         const ctx = {
             title: title,
             artist: artist || "",
@@ -2971,8 +2988,8 @@ Rectangle {
 
     // --- Sumber lirik utama: aplikasi musik yang sedang aktif ---
     // Sonora dibaca lewat bridge CLI + cache (ada word timing asli).
-    // Player lain: metadata lyrics / .lrc lokal dipakai lebih dulu, lalu
-    // rantai penyedia lama menjadi alternatif bila keduanya tidak ada.
+    // Player lain langsung memakai LRCLIB; cache native Sonora tidak
+    // dipakai ulang saat player berganti.
     readonly property bool activePlayerIsSonora: root.activePlayerName.indexOf("sonora") !== -1
     // Sonora memakai id video sebagai track id. MPRIS Sonora menyimpannya di
     // xesam:url (?v=...), jadi ini dipakai untuk membuang jawaban lama.
@@ -3211,13 +3228,11 @@ Rectangle {
         onTriggered: {
             if (!root.hasActivePlayer)
                 return
-            if (root.activePlayerIsSonora) {
-                if (!sonoraBridgeProc.running) {
-                    root.nativeBridgeRequestedTrackId = root.currentTrackId
-                    sonoraBridgeProc.running = true
-                }
-            } else {
-                root.tryActivePlayerNativeLyrics()
+            if (!root.activePlayerIsSonora)
+                return
+            if (!sonoraBridgeProc.running) {
+                root.nativeBridgeRequestedTrackId = root.currentTrackId
+                sonoraBridgeProc.running = true
             }
         }
     }
@@ -3458,7 +3473,7 @@ Rectangle {
     Rectangle {
         id: floatingBackground
         anchors.fill: parent
-        visible: root.isFloatingIsland
+        visible: !root.notchSilhouette
         radius: root.sp(24)
         gradient: Gradient {
             GradientStop {
@@ -3485,7 +3500,7 @@ Rectangle {
     Shape {
         id: notchBackground
         anchors.fill: parent
-        visible: !root.isFloatingIsland
+        visible: root.notchSilhouette
         antialiasing: true
         preferredRendererType: Shape.CurveRenderer
 
@@ -3603,9 +3618,9 @@ Rectangle {
             ClippingRectangle {
                 Layout.preferredWidth: root.sp(28)
                 Layout.preferredHeight: root.sp(28)
-                radius: root.sp(root.isFloatingIsland ? 6 : 8)
+                radius: root.sp(root.notchSilhouette ? 8 : 6)
                 color: "#141414"
-                border.width: root.isFloatingIsland ? 0 : 1
+                border.width: root.notchSilhouette ? 1 : 0
                 border.color: Qt.rgba(1, 1, 1, 0.08)
                 scale: root.isPlaying ? 1.0 : 0.9
 

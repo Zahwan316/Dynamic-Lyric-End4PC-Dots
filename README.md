@@ -38,7 +38,9 @@ The compact pill is drawn as a custom shape:
 - the top-left/top-right corners curve inward as concave “shoulders”;
 - the body is narrower, with rounded bottom corners;
 - when `useAlbumColor` is enabled, a dark gradient tinted from the album accent color fills the shape;
-- on a bottom bar the shape is mirrored vertically.
+- on a bottom bar the shape is mirrored vertically;
+- the pull-to-edge offset follows the visible bar surface: `40 px` for Hug/M3/Float and `44 px` for M3 Hug, Panel and Split Hug (Float's outer window is taller but its background is inset by the gap);
+- the **Islands** bar style uses the fully rounded pill instead of a notch, because there is no continuous bar edge to attach to.
 
 ### `floating` / `floating-island`
 
@@ -91,8 +93,9 @@ All options live under `bar.lyricsWidget` in:
 The lyrics already held by the **currently active music app** are used first:
 
 - **Sonora**: `scripts/lyrics/sonora_bridge.py` reads `sonora lyrics --json` for the complete synced sheet and joins it with the word onsets stored in Sonora's cache, so the karaoke sweep follows the same timing Sonora uses. No new lookup is triggered.
-- **Other MPRIS players**: `xesam:lyrics` / `mpris:lyrics` metadata is parsed if present; for local files a `.lrc` sidecar next to the track is used.
-- If the active app exposes no lyrics, the provider chain below takes over.
+- **Other MPRIS players**: lookup goes directly to **LRCLIB** only. Sonora-native cached lyrics are deliberately ignored when the player changes, so a track played outside Sonora does not inherit Sonora's sheet.
+
+When Sonora exposes no lyrics, this fallback chain is used:
 
 ```text
 lrclib → netease → kugou → musixmatch → subsonic → jellyfin → applemusic → youtubemusic
